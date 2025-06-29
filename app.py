@@ -103,15 +103,15 @@ if menu == "🔍 কয়েন বিশ্লেষণ":
 
     # ===== DexScreener Direct Link =====
     elif option == "DexScreener লিংক":
-        input_url = st.text_input("🔗 DexScreener লিংক দিন (যেমন: https://dexscreener.com/solana/abc...)")
-        if input_url and st.button("📊 বিশ্লেষণ করুন"):
-            try:
-                parts = input_url.replace("https://dexscreener.com/", "").split("/")
-                chain, pair = parts[0], parts[1]
-                st.experimental_set_query_params(chain=chain, pair=pair)
-                st.rerun()
-            except:
-                st.error("⚠️ সঠিক DexScreener লিংক দিন")
+    input_url = st.text_input("🔗 DexScreener লিংক দিন (যেমন: https://dexscreener.com/solana/abc...)")
+    if input_url and st.button("📊 বিশ্লেষণ করুন"):
+        try:
+            parts = input_url.replace("https://dexscreener.com/", "").split("/")
+            chain, pair = parts[0], parts[1]
+            st.experimental_set_query_params(chain=chain, pair=pair)
+            st.experimental_rerun()
+        except:
+            st.error("⚠️ সঠিক DexScreener লিংক দিন")
 
     # ===== CoinGecko Token Page =====
     elif option == "CoinGecko লিংক":
