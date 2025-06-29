@@ -1,146 +1,63 @@
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import streamlit as st
+import requests
+import json
 
-const OPENAI_API_KEY = "YOUR_API_KEY"; // তোমার GPT key বসাও
+# 👉 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 = "sk-..."
 
-void main() => runApp(MyApp());
+st.set_page_config(page_title="AI Coin Advisor (বাংলা)", layout="centered")
+st.title("🧠 AI Coin Advisor (বাংলা)")
 
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'AI Coin Advisor (বাংলা)',
-      theme: ThemeData(primarySwatch: Colors.green),
-      home: CoinAdvisorPage(),
-    );
-  }
-}
+coin = st.text_input("🔎 কয়েনের নাম লিখো (যেমন: btc, eth, pepe, sol)").lower()
 
-class CoinAdvisorPage extends StatefulWidget {
-  @override
-  _CoinAdvisorPageState createState() => _CoinAdvisorPageState();
-}
+if st.button("📊 AI বিশ্লেষণ দেখাও"):
+    if not coin:
+        st.warning("দয়া করে একটি কয়েন নাম লিখো!")
+    else:
+        with st.spinner("AI বিশ্লেষণ আনছে..."):
 
-class _CoinAdvisorPageState extends State<CoinAdvisorPage> {
-  final TextEditingController _controller = TextEditingController();
-  String _result = "";
-  bool _loading = false;
+            url = f"https://api.coingecko.com/api/v3/coins/{coin}?localization=false&tickers=false&market_data=true"
+            response = requests.get(url)
 
-  Future<void> fetchAndAnalyze(String coinSymbol) async {
-    setState(() {
-      _loading = true;
-      _result = "";
-    });
+            if response.status_code != 200:
+                st.error("❌ Coin পাওয়া যায়নি বা API error")
+            else:
+                data = response.json()
+                name = data["name"]
+                price = data["market_data"]["current_price"]["usd"]
+                change_1h = data["market_data"]["price_change_percentage_1h_in_currency"]["usd"]
+                change_24h = data["market_data"]["price_change_percentage_24h_in_currency"]["usd"]
+                market_cap = data["market_data"]["market_cap"]["usd"] / 1e9
 
-    final coin = coinSymbol.toLowerCase();
-    final url =
-        'https://api.coingecko.com/api/v3/coins/$coin?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false';
+                prompt = f"""
+{name} কয়েনের বর্তমান মূল্য ${price:.3f}, 
+১ ঘণ্টায় পরিবর্তন {change_1h:.2f}%, 
+২৪ ঘণ্টায় পরিবর্তন {change_24h:.2f}% 
+এবং মার্কেট ক্যাপ ${market_cap:.2f}B।
 
-    try {
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final name = data['name'];
-        final price = data['market_data']['current_price']['usd'];
-        final change1h = data['market_data']['price_change_percentage_1h_in_currency']['usd'];
-        final change24h = data['market_data']['price_change_percentage_24h_in_currency']['usd'];
-        final marketCap = data['market_data']['market_cap']['usd'];
+উপরের তথ্য বিশ্লেষণ করে বাংলায় বলো — এখন কিনবো, বিক্রি করবো, না হোল্ড করবো। ট্রেডারের মত আত্মবিশ্বাসী ভাষায় ব্যাখ্যা করো।
+                """
 
-        final prompt = """
-$coinSymbol কয়েন সম্পর্কিত নিচের তথ্য বিশ্লেষণ করো এবং বাংলায় বলো — এখন কিনবো, বিক্রি করবো, না হোল্ড করবো।
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {OPENAI_API_KEY}"
+                }
 
-নাম: $name  
-বর্তমান দাম: \$${price.toStringAsFixed(3)}  
-১ ঘণ্টায় পরিবর্তন: ${change1h.toStringAsFixed(2)}%  
-২৪ ঘণ্টায় পরিবর্তন: ${change24h.toStringAsFixed(2)}%  
-মার্কেট ক্যাপ: \$${(marketCap / 1e9).toStringAsFixed(2)}B
+                payload = {
+                    "model": "gpt-3.5-turbo",
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.7
+                }
 
-ট্রেডারের মতো আত্মবিশ্বাসী পরামর্শ দাও, ভয় না দেখিয়ে। সংক্ষেপে বলো।
-""";
+                ai_res = requests.post("https://api.openai.com/v1/chat/completions",
+                                       headers=headers, data=json.dumps(payload))
 
-        final aiResponse = await http.post(
-          Uri.parse("https://api.openai.com/v1/chat/completions"),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $OPENAI_API_KEY',
-          },
-          body: jsonEncode({
-            "model": "gpt-3.5-turbo",
-            "messages": [
-              {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 200,
-            "temperature": 0.7,
-          }),
-        );
-
-        if (aiResponse.statusCode == 200) {
-          final aiData = jsonDecode(aiResponse.body);
-          setState(() {
-            _result = aiData['choices'][0]['message']['content'];
-          });
-        } else {
-          setState(() {
-            _result = "AI বিশ্লেষণ আনতে সমস্যা হয়েছে (${aiResponse.statusCode})";
-          });
-        }
-      } else {
-        setState(() {
-          _result = "এই কয়েনটি পাওয়া যায়নি বা CoinGecko API error (${response.statusCode})";
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _result = "এক্সেপশন হয়েছে: $e";
-      });
-    }
-
-    setState(() {
-      _loading = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('AI Coin Advisor (বাংলা)')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _controller,
-              decoration: InputDecoration(
-                labelText: 'কয়েন লিখো (যেমন: sol, btc, pepe)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: _loading
-                  ? null
-                  : () {
-                      if (_controller.text.isNotEmpty) {
-                        fetchAndAnalyze(_controller.text.trim());
-                      }
-                    },
-              child: _loading
-                  ? CircularProgressIndicator(color: Colors.white)
-                  : Text("🧠 AI বিশ্লেষণ দেখাও"),
-            ),
-            SizedBox(height: 20),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Text(
-                  _result,
-                  style: TextStyle(fontSize: 16),
-                ),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-}
+                if ai_res.status_code == 200:
+                    ai_text = ai_res.json()['choices'][0]['message']['content']
+                    st.success("✅ AI বিশ্লেষণ:")
+                    st.markdown(f"**{ai_text}**")
+                else:
+                    st.error(f"❌ GPT API Error: {ai_res.status_code}")
+                  
