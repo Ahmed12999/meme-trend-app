@@ -31,20 +31,6 @@ if option == "নাম দিয়ে (Token Name)":
         else:
             url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
             try:
-                response = requests.get(url)
-                data = response.json()
-
-                if 'pairs' not in data or len(data['pairs']) == 0:
-                    st.error(f"'{token_name}' টোকেন পাওয়া যায়নি 😓")
-                else:
-                    pair = data['pairs'][0]
-                    name = pair['baseToken']['name']
-                    symbol = pair['baseToken']['symbol']
-                    price = float(pair['priceUsd'])
-                    chain = pair['chainId']
-                    mcap = pair.get('fdv', 'N/A')
-                    volume = pair['volume']['h24']
-                    price_change = float(pair['priceChange']['h1'])
 
                     trend = "📈 UP" if price_change > 0 else "📉 DOWN"
 
