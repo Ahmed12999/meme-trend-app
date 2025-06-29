@@ -1,78 +1,24 @@
+
 import streamlit as st
 import requests
-import pandas as pd
 
-# RSI ক্যালকুলেশন ফাংশন
-def calculate_rsi(prices, period=14):
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+st.set_page_config(page_title="মিম কয়েন মার্কেট বিশ্লেষণ", layout="centered")
 
-st.set_page_config(page_title="মিম কয়েন বিশ্লেষক", page_icon="📈")
-st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (BUY / SELL + Pump.fun)")
+st.title("🚀 মিম কয়েন মার্কেট বিশ্লেষক (BUY / SELL + Pump.fun)")
+st.markdown("## 📊 রিয়েল-টাইম বিশ্লেষণ")
 
-option = st.radio(
-    "🔍 কোনভাবে বিশ্লেষণ করতে চান?",
-    ("নাম দিয়ে (Token Name)", "অ্যাড্রেস দিয়ে (Token Address)")
-)
+analysis_type = st.radio("🔍 কোনভাবে বিশ্লেষণ করতে চান?", ["অ্যাড্রেস দিয়ে (Token Address)"])
 
-# -------- Option 1: Name Based Analysis --------
-if option == "নাম দিয়ে (Token Name)":
-    token_name = st.text_input("✏️ মিম কয়েনের নাম লিখুন (যেমন: pepe, bonk, doge)")
-
-    if st.button("📊 ট্রেন্ড দেখুন"):
-        if not token_name:
-            st.warning("⚠️ দয়া করে একটি টোকেনের নাম দিন!")
-        else:
-            url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
-            try:
-
-                    trend = "📈 UP" if price_change > 0 else "📉 DOWN"
-
-                    # RSI হিসাব
-                    history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-                    price_series = pd.Series(history)
-                    rsi_value = calculate_rsi(price_series).iloc[-1]
-
-                    if rsi_value > 70:
-                        signal = "🔴 SELL (Overbought)"
-                    elif rsi_value < 30:
-                        signal = "🟢 BUY (Oversold)"
-                    else:
-                        signal = "🟡 HOLD (Neutral)"
-
-                    st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ")
-                    st.markdown(f"""
-                    - 🌐 **চেইন:** {chain}  
-                    - 💵 **দাম:** ${price:.8f}  
-                    - 📊 **১ ঘণ্টায় পরিবর্তন:** {price_change:.2f}%  
-                    - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}  
-                    - 🧢 **মার্কেট ক্যাপ (FDV):** {mcap}  
-                    - 📡 **ট্রেন্ড:** {trend}  
-                    - 📈 **RSI:** {rsi_value:.2f}  
-                    - 📣 **Market Signal:** {signal}
-                    """)
-            except Exception as e:
-                st.error(f"❌ সমস্যা হয়েছে: {e}")
-
-# -------- Option 2: Address Based Analysis (Pump.fun etc.) --------
-elif option == "অ্যাড্রেস দিয়ে (Token Address)":
+if "অ্যাড্রেস" in analysis_type:
     token_address = st.text_input("🔗 টোকেনের ঠিকানা (address) দিন")
 
-    if st.button("🧠 বিশ্লেষণ দেখুন"):
-        if not token_address:
-            st.warning("⚠️ দয়া করে একটি টোকেন অ্যাড্রেস দিন!")
-        else:
-            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
-            try:
-                response = requests.get(url)
-                data = response.json()
+    if st.button("🧠 বিশ্লেষণ দেখুন") and token_address:
+        url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
+        response = requests.get(url)
+        data = response.json()
 
+        if data and 'pair' in data and data['pair']:
+            try:
                 name = data['pair']['baseToken']['name']
                 symbol = data['pair']['baseToken']['symbol']
                 price = float(data['pair']['priceUsd'])
@@ -81,35 +27,18 @@ elif option == "অ্যাড্রেস দিয়ে (Token Address)":
                 mcap = data['pair'].get('fdv', 'N/A')
                 price_change = float(data['pair']['priceChange']['h1'])
 
-                # RSI হিসাব
-                history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-                price_series = pd.Series(history)
-                rsi_value = calculate_rsi(price_series).iloc[-1]
+                st.markdown(f"### 🪙 নাম: `{name} ({symbol})`")
+                st.markdown(f"💰 মূল্য: **${price:.8f}**")
+                st.markdown(f"📦 মার্কেট ক্যাপ: `${mcap}`")
+                st.markdown(f"💧 লিকুইডিটি: `${liquidity}`")
+                st.markdown(f"📊 ২৪ ঘণ্টার ভলিউম: `${volume}`")
+                st.markdown(f"📈 ১ ঘণ্টার প্রাইস চেঞ্জ: `{price_change}%`")
 
-                if rsi_value > 70:
-                    signal = "🔴 SELL (Overbought)"
-                elif rsi_value < 30:
-                    signal = "🟢 BUY (Oversold)"
+                if price_change > 0:
+                    st.success("✅ দাম বাড়ছে! সম্ভবত **BUY** করার সুযোগ।")
                 else:
-                    signal = "🟡 HOLD (Neutral)"
-
-                # Pump Score (সিম্পল মডেল)
-                pump_score = 0
-                if liquidity < 10000: pump_score += 30
-                if volume > 5000: pump_score += 30
-                if rsi_value < 40: pump_score += 40
-                pump_score = min(pump_score, 100)
-
-                st.success(f"✅ **{name} ({symbol})** Token Address বিশ্লেষণ")
-                st.markdown(f"""
-                - 💵 **দাম:** ${price:.8f}  
-                - 💧 **লিকুইডিটি:** ${liquidity:,}  
-                - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}  
-                - 🧢 **মার্কেট ক্যাপ:** {mcap}  
-                - 📈 **RSI:** {rsi_value:.2f}  
-                - 📣 **Market Signal:** {signal}  
-                - 🚀 **Pump Score:** {pump_score}/100
-                """)
+                    st.warning("⚠️ দাম কমছে! সতর্ক থাকুন, হয়তো **SELL** করার সময়।")
             except Exception as e:
-                st.error(f"❌ বিশ্লেষণে সমস্যা হয়েছে: {e}")
-                
+                st.error(f"❌ বিশ্লেষণে সমস্যা: {e}")
+        else:
+            st.error("❌ টোকেন অ্যাড্রেস সঠিক নয় বা Pump.fun থেকে ডেটা পাওয়া যায়নি।")
