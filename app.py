@@ -28,7 +28,7 @@ st.set_page_config(page_title="AI ক্রিপ্টো ট্রেডিং
 st.title("🤖 AI ক্রিপ্টো ট্রেডিং অ্যাডভাইজার")
 
 option = st.radio("🔍 বিশ্লেষণের ধরন বাছাই করুন:",
-                  ("DexScreener URL", "CoinGecko URL", "কয়েনের নাম দিয়ে (Search)", "Token Address (Pump.fun)"))
+                  ("DexScreener URL", "CoinGecko URL"))
 
 if option == "DexScreener URL":
     url_input = st.text_input("🔗 DexScreener URL দিন (যেমন: https://dexscreener.com/solana/....)")
@@ -42,29 +42,42 @@ if option == "DexScreener URL":
             chart_url = f"https://api.dexscreener.com/latest/dex/chart/{chain}/{pair}"
             meta_url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair}"
 
-            chart = requests.get(chart_url).json()
-            candles = chart.get("candles", [])
-            close_prices = [c[4] for c in candles]
-            price_series = pd.Series(close_prices)
-            rsi_value = calculate_rsi(price_series).iloc[-1] if not price_series.empty else 0
+            chart_response = requests.get(chart_url)
+            if chart_response.status_code == 200:
+                try:
+                    chart = chart_response.json()
+                    candles = chart.get("candles", [])
+                    close_prices = [c[4] for c in candles]
+                    price_series = pd.Series(close_prices)
+                    rsi_value = calculate_rsi(price_series).iloc[-1] if not price_series.empty else 0
+                except Exception as e:
+                    st.error(f"❌ চার্ট ডেটা বিশ্লেষণে সমস্যা হয়েছে: {e}")
+                    st.stop()
+            else:
+                st.error(f"❌ চার্ট API রেসপন্স ঠিক নেই: {chart_response.status_code}")
+                st.stop()
 
-            meta = requests.get(meta_url).json().get("pair", {})
-            name = meta.get("baseToken", {}).get("name", "Unknown")
-            symbol = meta.get("baseToken", {}).get("symbol", "N/A")
-            price = float(meta.get("priceUsd", 0))
-            volume = meta.get("volume", {}).get("h24", 0)
-            price_change = float(meta.get("priceChange", {}).get("h1", 0))
+            meta_response = requests.get(meta_url)
+            if meta_response.status_code == 200:
+                meta = meta_response.json().get("pair", {})
+                name = meta.get("baseToken", {}).get("name", "Unknown")
+                symbol = meta.get("baseToken", {}).get("symbol", "N/A")
+                price = float(meta.get("priceUsd", 0))
+                volume = meta.get("volume", {}).get("h24", 0)
+                price_change = float(meta.get("priceChange", {}).get("h1", 0))
 
-            signal = ai_decision(rsi_value, price_change, volume)
+                signal = ai_decision(rsi_value, price_change, volume)
 
-            st.success(f"📊 বিশ্লেষণ: {name} ({symbol})")
-            st.markdown(f"""
-            - 💵 দাম: ${price:.8f}  
-            - 🔄 ১ ঘণ্টার পরিবর্তন: {price_change:.2f}%  
-            - 📦 ২৪ ঘণ্টার ভলিউম: ${volume:,}  
-            - 📈 RSI: {rsi_value:.2f}  
-            - 🤖 সিদ্ধান্ত: **{signal}**
-            """)
+                st.success(f"📊 বিশ্লেষণ: {name} ({symbol})")
+                st.markdown(f"""
+                - 💵 দাম: ${price:.8f}  
+                - 🔄 ১ ঘণ্টার পরিবর্তন: {price_change:.2f}%  
+                - 📦 ২৪ ঘণ্টার ভলিউম: ${volume:,}  
+                - 📈 RSI: {rsi_value:.2f}  
+                - 🤖 সিদ্ধান্ত: **{signal}**
+                """)
+            else:
+                st.error(f"❌ মেটা API রেসপন্স ঠিক নেই: {meta_response.status_code}")
 
 elif option == "CoinGecko URL":
     url_input = st.text_input("🔗 CoinGecko টোকেন URL দিন (যেমন: https://www.coingecko.com/en/coins/pepe)")
@@ -94,99 +107,4 @@ elif option == "CoinGecko URL":
             - 📈 RSI (Estimate): {rsi_value}  
             - 🤖 সিদ্ধান্ত: **{signal}**
             """)
-
-elif option == "কয়েনের নাম দিয়ে (Search)":
-    token_name = st.text_input("✏️ মিম কয়েনের নাম লিখুন (যেমন: pepe, bonk, doge)")
-
-    if st.button("📊 ট্রেন্ড দেখুন") and token_name:
-        url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
-        try:
-            response = requests.get(url)
-            data = response.json()
-
-            if 'pairs' not in data or len(data['pairs']) == 0:
-                st.error(f"'{token_name}' টোকেন পাওয়া যায়নি 😓")
-            else:
-                pair = data['pairs'][0]
-                name = pair['baseToken']['name']
-                symbol = pair['baseToken']['symbol']
-                price = float(pair['priceUsd'])
-                chain = pair['chainId']
-                mcap = pair.get('fdv', 'N/A')
-                volume = pair['volume']['h24']
-                price_change = float(pair['priceChange']['h1'])
-
-                trend = "📈 UP" if price_change > 0 else "📉 DOWN"
-
-                history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-                price_series = pd.Series(history)
-                rsi_value = calculate_rsi(price_series).iloc[-1]
-
-                if rsi_value > 70:
-                    signal = "🔴 SELL (Overbought)"
-                elif rsi_value < 30:
-                    signal = "🟢 BUY (Oversold)"
-                else:
-                    signal = "🟡 HOLD (Neutral)"
-
-                st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ")
-                st.markdown(f"""
-                - 🌐 **চেইন:** {chain}   
-                - 💵 **দাম:** ${price:.8f}   
-                - 📊 **১ ঘণ্টায় পরিবর্তন:** {price_change:.2f}%   
-                - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}   
-                - 🧢 **মার্কেট ক্যাপ (FDV):** {mcap}   
-                - 📡 **ট্রেন্ড:** {trend}   
-                - 📈 **RSI:** {rsi_value:.2f}   
-                - 📣 **Market Signal:** {signal}
-                """)
-        except Exception as e:
-            st.error(f"❌ সমস্যা হয়েছে: {e}")
-
-elif option == "Token Address (Pump.fun)":
-    token_address = st.text_input("🔗 টোকেনের ঠিকানা (address) দিন")
-
-    if st.button("🧠 বিশ্লেষণ দেখুন") and token_address:
-        url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
-        try:
-            response = requests.get(url)
-            data = response.json()
-
-            name = data['pair']['baseToken']['name']
-            symbol = data['pair']['baseToken']['symbol']
-            price = float(data['pair']['priceUsd'])
-            liquidity = data['pair']['liquidity']['usd']
-            volume = data['pair']['volume']['h24']
-            mcap = data['pair'].get('fdv', 'N/A')
-            price_change = float(data['pair']['priceChange']['h1'])
-
-            history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-            price_series = pd.Series(history)
-            rsi_value = calculate_rsi(price_series).iloc[-1]
-
-            if rsi_value > 70:
-                signal = "🔴 SELL (Overbought)"
-            elif rsi_value < 30:
-                signal = "🟢 BUY (Oversold)"
-            else:
-                signal = "🟡 HOLD (Neutral)"
-
-            pump_score = 0
-            if liquidity < 10000: pump_score += 30
-            if volume > 5000: pump_score += 30
-            if rsi_value < 40: pump_score += 40
-            pump_score = min(pump_score, 100)
-
-            st.success(f"✅ **{name} ({symbol})** Token Address বিশ্লেষণ")
-            st.markdown(f"""
-            - 💵 **দাম:** ${price:.8f}   
-            - 💧 **লিকুইডিটি:** ${liquidity:,}   
-            - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}   
-            - 🧢 **মার্কেট ক্যাপ:** {mcap}   
-            - 📈 **RSI:** {rsi_value:.2f}   
-            - 📣 **Market Signal:** {signal}   
-            - 🚀 **Pump Score:** {pump_score}/100
-            """)
-        except Exception as e:
-            st.error(f"❌ বিশ্লেষণে সমস্যা হয়েছে: {e}")
             
