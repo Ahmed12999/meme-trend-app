@@ -28,7 +28,7 @@ st.set_page_config(page_title="AI ক্রিপ্টো ট্রেডিং
 st.title("🤖 AI ক্রিপ্টো ট্রেডিং অ্যাডভাইজার")
 
 option = st.radio("🔍 বিশ্লেষণের ধরন বাছাই করুন:",
-                  ("DexScreener URL", "CoinGecko URL"))
+                  ("DexScreener URL", "CoinGecko URL", "কয়েনের নাম দিয়ে (Search)"))
 
 if option == "DexScreener URL":
     url_input = st.text_input("🔗 DexScreener URL দিন (যেমন: https://dexscreener.com/solana/....)")
@@ -107,4 +107,40 @@ elif option == "CoinGecko URL":
             - 📈 RSI (Estimate): {rsi_value}  
             - 🤖 সিদ্ধান্ত: **{signal}**
             """)
-            
+
+elif option == "কয়েনের নাম দিয়ে (Search)":
+    token_name = st.text_input("✏️ মিম কয়েনের নাম লিখুন (যেমন: pepe, bonk, doge)")
+
+    if st.button("📊 ট্রেন্ড দেখুন") and token_name:
+        url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
+        try:
+            response = requests.get(url)
+            data = response.json()
+
+            if 'pairs' not in data or len(data['pairs']) == 0:
+                st.error(f"'{token_name}' টোকেন পাওয়া যায়নি 😓")
+            else:
+                pair = data['pairs'][0]
+                name = pair['baseToken']['name']
+                symbol = pair['baseToken']['symbol']
+                price = float(pair['priceUsd'])
+                chain = pair['chainId']
+                mcap = pair.get('fdv', 'N/A')
+                volume = pair['volume']['h24']
+                price_change = float(pair['priceChange']['h1'])
+
+                trend = "📈 UP" if price_change > 0 else "📉 DOWN"
+
+                history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
+                price_series = pd.Series(history)
+                rsi_value = calculate_rsi(price_series).iloc[-1]
+
+                if rsi_value > 70:
+                    signal = "🔴 SELL (Overbought)"
+                elif rsi_value < 30:
+                    signal = "🟢 BUY (Oversold)"
+                else:
+                    signal = "🟡 HOLD (Neutral)"
+
+                st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ")
+                st.markdown(f"""
