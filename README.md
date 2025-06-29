@@ -1,1 +1,1 @@
-# meme-trend-app
+# ai-coin-advisor
