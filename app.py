@@ -13,8 +13,20 @@ def calculate_rsi(prices, period=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+# AI ডিসিশন ফাংশন
+def ai_decision(rsi, price_change, volume):
+    if rsi > 70 and price_change < 0:
+        return "🔴 এখন বিক্রি করুন (SELL) - মার্কেট ডাউন ট্রেন্ডে এবং Overbought অবস্থা।"
+    elif rsi < 30 and price_change > 0:
+        return "🟢 এখন কিনুন (BUY) - দাম বাড়ছে এবং Oversold, ভালো সুযোগ।"
+    elif 30 <= rsi <= 70 and abs(price_change) < 1:
+        return "🟡 এখন HOLD করা নিরাপদ - মার্কেট স্থির এবং নিরপেক্ষ RSI।"
+    else:
+        return "⚠️ মার্কেট অনিশ্চিত, সতর্ক থাকুন। RSI: {:.2f}".format(rsi)
+
+# UI শুরু
 st.set_page_config(page_title="মিম কয়েন বিশ্লেষক", page_icon="📈")
-st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (BUY / SELL + Pump.fun)")
+st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (AI BUY / SELL + Pump.fun)")
 
 option = st.radio(
     "🔍 কোনভাবে বিশ্লেষণ করতে চান?",
@@ -53,12 +65,7 @@ if option == "নাম দিয়ে (Token Name)":
                     price_series = pd.Series(history)
                     rsi_value = calculate_rsi(price_series).iloc[-1]
 
-                    if rsi_value > 70:
-                        signal = "🔴 SELL (Overbought)"
-                    elif rsi_value < 30:
-                        signal = "🟢 BUY (Oversold)"
-                    else:
-                        signal = "🟡 HOLD (Neutral)"
+                    signal = ai_decision(rsi_value, price_change, volume)
 
                     st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ")
                     st.markdown(f"""
@@ -69,7 +76,7 @@ if option == "নাম দিয়ে (Token Name)":
                     - 🧢 **মার্কেট ক্যাপ (FDV):** {mcap}  
                     - 📡 **ট্রেন্ড:** {trend}  
                     - 📈 **RSI:** {rsi_value:.2f}  
-                    - 📣 **Market Signal:** {signal}
+                    - 🤖 **AI ডিসিশন:** {signal}
                     """)
             except Exception as e:
                 st.error(f"❌ সমস্যা হয়েছে: {e}")
@@ -100,14 +107,9 @@ elif option == "অ্যাড্রেস দিয়ে (Token Address)":
                 price_series = pd.Series(history)
                 rsi_value = calculate_rsi(price_series).iloc[-1]
 
-                if rsi_value > 70:
-                    signal = "🔴 SELL (Overbought)"
-                elif rsi_value < 30:
-                    signal = "🟢 BUY (Oversold)"
-                else:
-                    signal = "🟡 HOLD (Neutral)"
+                signal = ai_decision(rsi_value, price_change, volume)
 
-                # Pump Score (সিম্পল মডেল)
+                # Pump Score
                 pump_score = 0
                 if liquidity < 10000: pump_score += 30
                 if volume > 5000: pump_score += 30
@@ -121,8 +123,9 @@ elif option == "অ্যাড্রেস দিয়ে (Token Address)":
                 - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}  
                 - 🧢 **মার্কেট ক্যাপ:** {mcap}  
                 - 📈 **RSI:** {rsi_value:.2f}  
-                - 📣 **Market Signal:** {signal}  
+                - 🤖 **AI ডিসিশন:** {signal}  
                 - 🚀 **Pump Score:** {pump_score}/100
                 """)
             except Exception as e:
                 st.error(f"❌ বিশ্লেষণে সমস্যা হয়েছে: {e}")
+                
