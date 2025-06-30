@@ -27,7 +27,7 @@ def ai_decision(rsi, macd_val, macd_signal, price_change, volume):
     else:
         return f"⚠️ অনিশ্চিত অবস্থান, RSI: {rsi:.2f} {trend_signal}"
 
-# Streamlit UI
+# Streamlit UI সেটআপ
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
@@ -101,5 +101,31 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
 
                         analyze_coin(name, symbol, price, price_change, volume, "CoinGecko", mcap)
         except Exception as e:
-            st.error(
-                
+            st.error(f"❌ সমস্যা হয়েছে: {e}")
+
+# Option 2: DexScreener Address দিয়ে
+elif option == "DexScreener Address দিয়ে":
+    token_address = st.text_input("🔗 Solana টোকেন অ্যাড্রেস দিন")
+
+    if st.button("📊 বিশ্লেষণ করুন") and token_address:
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
+            res = requests.get(url)
+            data = res.json()
+
+            if not data or 'pair' not in data or data['pair'] is None:
+                st.error("⚠️ এই অ্যাড্রেসের জন্য কোনো টোকেন ডেটা পাওয়া যায়নি। সঠিক অ্যাড্রেস দিন বা পরে আবার চেষ্টা করুন।")
+            else:
+                pair = data['pair']
+                name = pair['baseToken']['name']
+                symbol = pair['baseToken']['symbol']
+                price = float(pair['priceUsd'])
+                price_change = float(pair['priceChange']['h1'])
+                volume = pair['volume']['h24']
+                mcap = pair.get('fdv', 'N/A')
+
+                analyze_coin(name, symbol, price, price_change, volume, "Solana", mcap)
+
+        except Exception as e:
+            st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
+            
