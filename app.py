@@ -2,23 +2,29 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
 
 # RSI ক্যালকুলেশন ফাংশন
 def calculate_rsi(prices, period=14):
-    rsi = RSIIndicator(close=prices, window=period)
-    return rsi.rsi()
+    delta = prices.diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
-# EMA ক্যালকুলেশন ফাংশন
+# EMA ফাংশন
 def calculate_ema(prices, period=14):
-    ema = EMAIndicator(close=prices, window=period)
-    return ema.ema_indicator()
+    return prices.ewm(span=period, adjust=False).mean()
 
-# MACD ক্যালকুলেশন ফাংশন
+# MACD ফাংশন
 def calculate_macd(prices):
-    macd = MACD(close=prices)
-    return macd.macd(), macd.macd_signal()
+    ema12 = prices.ewm(span=12, adjust=False).mean()
+    ema26 = prices.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    return macd, signal
 
 # AI ডিসিশন ফাংশন
 def ai_decision(rsi, macd, signal_line, price_change, volume):
@@ -37,121 +43,108 @@ def ai_decision(rsi, macd, signal_line, price_change, volume):
     else:
         return f"⚠️ অনিশ্চিত অবস্থা, সতর্ক থাকুন। RSI: {rsi:.2f}\n{trend_signal}"
 
-# UI শুরু
-st.set_page_config(page_title="মিম কয়েন বিশ্লেষক", page_icon="📈")
-st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (AI BUY / SELL + RSI, MACD, EMA)")
+# CoinGecko সার্চ ফাংশন
+def search_coin_gecko(query):
+    try:
+        search_url = f"https://api.coingecko.com/api/v3/search?query={query}"
+        res = requests.get(search_url)
+        if res.status_code == 200:
+            result = res.json()
+            if len(result['coins']) > 0:
+                return result['coins'][0]['id']
+    except:
+        return None
 
-option = st.radio(
-    "🔍 কোনভাবে বিশ্লেষণ করতে চান:",
-    ("নাম দিয়ে (Token Name)", "অ্যাড্রেস দিয়ে (Token Address)", "CoinGecko থেকে")
-)
+# Coingecko থেকে দাম ও ডেটা আনা
+def analyze_from_coingecko(token):
+    try:
+        token_id = search_coin_gecko(token)
+        if not token_id:
+            st.error(f"'{token}' CoinGecko তে পাওয়া যায়নি")
+            return
+        cg_api = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
+        res = requests.get(cg_api)
+        if res.status_code == 200:
+            data = res.json()
+            name = data['name']
+            symbol = data['symbol'].upper()
+            price = data['market_data']['current_price']['usd']
+            volume = data['market_data']['total_volume']['usd']
+            price_change = data['market_data']['price_change_percentage_1h_in_currency']['usd']
 
-# -------- Function: বিশ্লেষণ চালানো --------
-def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
-    history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-    price_series = pd.Series(history)
-    rsi_value = calculate_rsi(price_series).iloc[-1]
-    macd, signal_line = calculate_macd(price_series)
-    ema_value = calculate_ema(price_series).iloc[-1]
+            history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
+            price_series = pd.Series(history)
+            rsi_value = calculate_rsi(price_series).iloc[-1]
+            macd, signal_line = calculate_macd(price_series)
+            ema_value = calculate_ema(price_series).iloc[-1]
 
-    signal = ai_decision(rsi_value, macd, signal_line, price_change, volume)
+            signal = ai_decision(rsi_value, macd, signal_line, price_change, volume)
 
-    st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ")
-    st.markdown(f"""
-    - 🌐 **চেইন:** {chain or 'N/A'}  
-    - 💵 **দাম:** ${price:.8f}  
-    - 📊 **১ ঘণ্টায় পরিবর্তন:** {price_change:.2f}%  
-    - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}  
-    - 🧢 **মার্কেট ক্যাপ (FDV):** {mcap or 'N/A'}  
+            st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ (CoinGecko)")
+            st.markdown(f"""
+            - 💵 **দাম:** ${price:.8f}   
+            - 📊 **১ ঘণ্টায় পরিবর্তন:** {price_change:.2f}%   
+            - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}   
 
-    ### 🧠 টেকনিক্যাল ডেটা:
-    - 📈 **RSI:** {rsi_value:.2f}  
-    - 📊 **EMA (14):** {ema_value:.4f}  
-    - 📉 **MACD:** {macd.iloc[-1]:.4f}, Signal: {signal_line.iloc[-1]:.4f}  
+            ### 📊 টেকনিক্যাল ইনডিকেটর:
+            - RSI: {rsi_value:.2f}
+            - EMA(14): {ema_value:.4f}
+            - MACD: {macd.iloc[-1]:.4f}, Signal: {signal_line.iloc[-1]:.4f}
 
-    ### 🧾 মার্কেট কন্ডিশন:
-    - 💸 **ভলিউম:** ${volume:,}  
-    - 💬 **Sentiment:** ট্রেন্ড = {'📈 UP' if price_change > 0 else '📉 DOWN'}  
-
-    ### 🤖 AI সিদ্ধান্ত:
-    {signal}
-    """)
-
-# -------- Option 1: Name Based Analysis --------
-if option == "নাম দিয়ে (Token Name)":
-    token_name = st.text_input("✏️ মিম কয়েনের নাম লিখুন (যেমন: pepe, bonk, doge)")
-
-    if st.button("📊 ট্রেন্ড দেখুন"):
-        if not token_name:
-            st.warning("⚠️ দয়া করে একটি টোকেনের নাম দিন!")
+            ### 🤖 AI ডিসিশন:
+            {signal}
+            """)
         else:
-            url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
-            try:
-                response = requests.get(url)
-                data = response.json()
+            st.error("⚠️ CoinGecko token খুঁজে পাওয়া যায়নি")
+    except Exception as e:
+        st.error(f"❌ CoinGecko API সমস্যা: {e}")
 
-                if 'pairs' not in data or len(data['pairs']) == 0:
-                    st.error(f"'{token_name}' টোকেন পাওয়া যায়নি 😓")
-                else:
-                    pair = data['pairs'][0]
-                    name = pair['baseToken']['name']
-                    symbol = pair['baseToken']['symbol']
-                    price = float(pair['priceUsd'])
-                    chain = pair['chainId']
-                    mcap = pair.get('fdv', 'N/A')
-                    volume = pair['volume']['h24']
-                    price_change = float(pair['priceChange']['h1'])
+# স্ট্রিমলিট UI
+st.set_page_config(page_title="মার্কেট বিশ্লেষক", page_icon="📈")
+st.title("🪙 অল ইন ওয়ান ক্রিপ্টো এনালাইসিস (Dex + CoinGecko)")
 
-                    analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
-            except Exception as e:
-                st.error(f"❌ সমস্যা হয়েছে: {e}")
+query = st.text_input("🔍 টোকেনের নাম লিখুন:")
 
-# -------- Option 2: Address Based Analysis (Pump.fun etc.) --------
-elif option == "অ্যাড্রেস দিয়ে (Token Address)":
-    token_address = st.text_input("🔗 টোকেনের ঠিকানা (address) দিন")
+if st.button("🔎 বিশ্লেষণ শুরু করুন") and query:
+    try:
+        dex_url = f"https://api.dexscreener.com/latest/dex/search/?q={query.lower()}"
+        response = requests.get(dex_url)
+        data = response.json()
 
-    if st.button("🧠 বিশ্লেষণ দেখুন"):
-        if not token_address:
-            st.warning("⚠️ দয়া করে একটি টোকেন অ্যাড্রেস দিন!")
+        if 'pairs' in data and len(data['pairs']) > 0:
+            pair = data['pairs'][0]
+            name = pair['baseToken']['name']
+            symbol = pair['baseToken']['symbol']
+            price = float(pair['priceUsd'])
+            volume = pair['volume']['h24']
+            price_change = float(pair['priceChange']['h1'])
+
+            # হিস্টোরি তৈরি
+            history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
+            price_series = pd.Series(history)
+            rsi_value = calculate_rsi(price_series).iloc[-1]
+            macd, signal_line = calculate_macd(price_series)
+            ema_value = calculate_ema(price_series).iloc[-1]
+
+            signal = ai_decision(rsi_value, macd, signal_line, price_change, volume)
+
+            st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ (DexScreener)")
+            st.markdown(f"""
+            - 💵 **দাম:** ${price:.8f}   
+            - 📊 **১ ঘণ্টায় পরিবর্তন:** {price_change:.2f}%   
+            - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}   
+
+            ### 📊 টেকনিক্যাল ইনডিকেটর:
+            - RSI: {rsi_value:.2f}
+            - EMA(14): {ema_value:.4f}
+            - MACD: {macd.iloc[-1]:.4f}, Signal: {signal_line.iloc[-1]:.4f}
+
+            ### 🤖 AI ডিসিশন:
+            {signal}
+            """)
         else:
-            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
-            try:
-                response = requests.get(url)
-                data = response.json()
-
-                pair = data['pair']
-                name = pair['baseToken']['name']
-                symbol = pair['baseToken']['symbol']
-                price = float(pair['priceUsd'])
-                liquidity = pair['liquidity']['usd']
-                volume = pair['volume']['h24']
-                mcap = pair.get('fdv', 'N/A')
-                price_change = float(pair['priceChange']['h1'])
-
-                analyze_coin(name, symbol, price, price_change, volume, "solana", mcap)
-            except Exception as e:
-                st.error(f"❌ বিশ্লেষণে সমস্যা হয়েছে: {e}")
-
-# -------- Option 3: CoinGecko --------
-elif option == "CoinGecko থেকে":
-    token_url = st.text_input("🔗 CoinGecko URL দিন (যেমন: https://www.coingecko.com/en/coins/pepe)")
-
-    if st.button("📈 বিশ্লেষণ করুন") and token_url:
-        try:
-            token = token_url.rstrip("/").split("/")[-1]
-            cg_api = f"https://api.coingecko.com/api/v3/coins/{token}?localization=false&tickers=false&market_data=true"
-            res = requests.get(cg_api)
-            if res.status_code == 200:
-                data = res.json()
-                name = data['name']
-                symbol = data['symbol'].upper()
-                price = data['market_data']['current_price']['usd']
-                volume = data['market_data']['total_volume']['usd']
-                price_change = data['market_data']['price_change_percentage_1h_in_currency']['usd']
-
-                analyze_coin(name, symbol, price, price_change, volume, "CoinGecko")
-            else:
-                st.error("⚠️ CoinGecko token খুঁজে পাওয়া যায়নি")
-        except Exception as e:
-            st.error(f"❌ CoinGecko API সমস্যা: {e}")
-            
+            st.info("🔁 DexScreener এ ফলাফল না পাওয়ায় এখন CoinGecko থেকে খোঁজা হচ্ছে...")
+            analyze_from_coingecko(query)
+    except Exception as e:
+        st.error(f"❌ সমস্যা হয়েছে: {e}")
+        
