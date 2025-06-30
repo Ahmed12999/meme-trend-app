@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import numpy as np
 import ta
+import random
 
 # ইন্ডিকেটর হিসাব করার ফাংশন
 def calculate_indicators(prices):
@@ -36,18 +37,13 @@ option = st.radio(
     ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
 )
 
-# -------------------------
 # বিশ্লেষণ ফাংশন
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
-    # দাম সিরিজ বানানো
-    import random
-
-history = [
-    price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
-    for i in range(30)
-]
-price_series = pd.Series(history)
-
+    # দাম সিরিজ বানানো (historical price simulation)
+    history = [
+        price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
+        for i in range(30)
+    ]
     price_series = pd.Series(history)
     df = calculate_indicators(price_series)
 
@@ -75,7 +71,6 @@ price_series = pd.Series(history)
 {decision}
 """)
 
-# -------------------------
 # Option 1: CoinGecko
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     user_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)")
@@ -109,7 +104,6 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# -------------------------
 # Option 2: DexScreener
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 Solana টোকেন অ্যাড্রেস দিন")
