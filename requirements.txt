@@ -1,2 +1,6 @@
 streamlit
+pandas
 requests
+numpy
+python-binance
+ta
