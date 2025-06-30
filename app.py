@@ -3,7 +3,6 @@ import requests
 import pandas as pd
 import numpy as np
 import ta
-import random
 
 # ইন্ডিকেটর হিসাব করার ফাংশন
 def calculate_indicators(prices):
@@ -39,7 +38,7 @@ option = st.radio(
 
 # বিশ্লেষণ ফাংশন
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
-    # দাম সিরিজ বানানো (historical price simulation)
+    import random
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
         for i in range(30)
@@ -71,7 +70,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {decision}
 """)
 
-# Option 1: CoinGecko
+# Option 1: CoinGecko থেকে নাম দিয়ে
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     user_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)")
 
@@ -102,26 +101,5 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
 
                         analyze_coin(name, symbol, price, price_change, volume, "CoinGecko", mcap)
         except Exception as e:
-            st.error(f"❌ সমস্যা হয়েছে: {e}")
-
-# Option 2: DexScreener
-elif option == "DexScreener Address দিয়ে":
-    token_address = st.text_input("🔗 Solana টোকেন অ্যাড্রেস দিন")
-
-    if st.button("📊 বিশ্লেষণ করুন") and token_address:
-        try:
-            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
-            res = requests.get(url)
-            data = res.json()
-            pair = data['pair']
-            name = pair['baseToken']['name']
-            symbol = pair['baseToken']['symbol']
-            price = float(pair['priceUsd'])
-            price_change = float(pair['priceChange']['h1'])
-            volume = pair['volume']['h24']
-            mcap = pair.get('fdv', 'N/A')
-
-            analyze_coin(name, symbol, price, price_change, volume, "Solana", mcap)
-        except Exception as e:
-            st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-            
+            st.error(
+                
