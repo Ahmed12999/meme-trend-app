@@ -5,26 +5,26 @@ import numpy as np
 
 # RSI ক্যালকুলেশন ফাংশন
 def calculate_rsi(prices, period=14):
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    delta = prices.diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 # EMA ফাংশন
 def calculate_ema(prices, period=14):
-    return prices.ewm(span=period, adjust=False).mean()
+    return prices.ewm(span=period, adjust=False).mean()
 
 # MACD ফাংশন
 def calculate_macd(prices):
-    ema12 = prices.ewm(span=12, adjust=False).mean()
-    ema26 = prices.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
+    ema12 = prices.ewm(span=12, adjust=False).mean()
+    ema26 = prices.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    return macd, signal
 
 # AI ডিসিশন ফাংশন
 def ai_decision(rsi, macd, signal_line, price_change, volume):
