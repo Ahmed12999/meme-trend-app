@@ -1,6 +1,6 @@
 streamlit
 pandas
 requests
-python-binance
-TA-Lib
 numpy
+ta
+python-binance
