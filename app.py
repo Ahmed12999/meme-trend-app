@@ -1,8 +1,14 @@
 import streamlit as st
 import requests
 import pandas as pd
+import numpy as np
+from binance.client import Client
+import talib
 
-# RSI ক্যালকুলেশন
+# Binance client setup (no API key needed for public data)
+binance_client = Client()
+
+# RSI Calculation
 def calculate_rsi(prices, period=14):
     delta = prices.diff()
     gain = delta.where(delta > 0, 0)
@@ -13,11 +19,11 @@ def calculate_rsi(prices, period=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# EMA
+# EMA Calculation
 def calculate_ema(prices, period=14):
     return prices.ewm(span=period, adjust=False).mean()
 
-# MACD
+# MACD Calculation
 def calculate_macd(prices):
     ema12 = prices.ewm(span=12, adjust=False).mean()
     ema26 = prices.ewm(span=26, adjust=False).mean()
@@ -25,7 +31,7 @@ def calculate_macd(prices):
     signal = macd.ewm(span=9, adjust=False).mean()
     return macd, signal
 
-# AI ডিসিশন
+# AI Decision Based on Indicators
 def ai_decision(rsi, macd, signal_line, price_change, volume):
     trend_signal = ""
     if macd.iloc[-1] > signal_line.iloc[-1]:
@@ -34,103 +40,77 @@ def ai_decision(rsi, macd, signal_line, price_change, volume):
         trend_signal = "📉 MACD ইঙ্গিত করছে দাম কমতে পারে।"
 
     if rsi > 70 and price_change < 0:
-        return f"🔴 বিক্রি করুন - Overbought এবং দাম কমছে।\n{trend_signal}"
+        return f"🔴 এখন বিক্রি করুন (SELL) - Overbought এবং দাম কমছে।\n{trend_signal}"
     elif rsi < 30 and price_change > 0:
-        return f"🟢 এখন কিনুন - Oversold এবং দাম বাড়ছে।\n{trend_signal}"
+        return f"🟢 এখন কিনুন (BUY) - Oversold এবং দাম বাড়ছে।\n{trend_signal}"
     elif 30 <= rsi <= 70 and abs(price_change) < 1:
         return f"🟡 HOLD - মার্কেট স্থির।\n{trend_signal}"
     else:
         return f"⚠️ অনিশ্চিত অবস্থা, সতর্ক থাকুন। RSI: {rsi:.2f}\n{trend_signal}"
 
-# UI
+# Binance থেকে ক্যান্ডেল ডেটা আনো
+def get_binance_klines(symbol="PEPEUSDT", interval="5m", limit=50):
+    klines = binance_client.get_klines(symbol=symbol, interval=interval, limit=limit)
+    df = pd.DataFrame(klines, columns=[
+        "timestamp", "open", "high", "low", "close", "volume", "_1", "_2", "_3", "_4", "_5", "_6"
+    ])
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
+    df["volume"] = df["volume"].astype(float)
+    return df
+
+# ক্যান্ডেল প্যাটার্ন শনাক্ত করা
+def detect_patterns(df):
+    open_, high, low, close = df["open"], df["high"], df["low"], df["close"]
+    df['hammer'] = talib.CDLHAMMER(open_, high, low, close)
+    df['doji'] = talib.CDLDOJI(open_, high, low, close)
+    df['engulfing'] = talib.CDLENGULFING(open_, high, low, close)
+    
+    latest = df.iloc[-1]
+    signals = []
+    if latest['hammer'] != 0:
+        signals.append("🔨 **Hammer Detected** - মার্কেট রিভার্সাল আপ হতে পারে")
+    if latest['doji'] != 0:
+        signals.append("⚖️ **Doji Detected** - অনিশ্চিত মার্কেট অবস্থা")
+    if latest['engulfing'] > 0:
+        signals.append("🟢 **Bullish Engulfing Detected** - দাম বাড়তে পারে")
+    elif latest['engulfing'] < 0:
+        signals.append("🔴 **Bearish Engulfing Detected** - দাম কমতে পারে")
+    return signals
+
+# Streamlit UI শুরু
 st.set_page_config(page_title="মিম কয়েন বিশ্লেষক", page_icon="📈")
-st.title("🪙 মিম কয়েন বিশ্লেষক (DexScreener + CoinGecko)")
+st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (AI BUY / SELL + Candlestick Pattern)")
 
-option = st.radio(
-    "🔍 বিশ্লেষণের উৎস নির্বাচন করুন:",
-    ("DexScreener", "CoinGecko")
-)
+symbol_input = st.text_input("Binance Symbol দিন (যেমন: PEPEUSDT, BTCUSDT)", value="PEPEUSDT")
 
-# -------- DexScreener --------
-if option == "DexScreener":
-    token_name = st.text_input("✏️ টোকেনের নাম লিখুন (যেমন: pepe, bonk)")
-    if st.button("📊 বিশ্লেষণ দেখাও") and token_name:
-        url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
-        try:
-            res = requests.get(url)
-            data = res.json()
-            if 'pairs' not in data or len(data['pairs']) == 0:
-                st.error("কোনও টোকেন পাওয়া যায়নি")
-            else:
-                pair = data['pairs'][0]
-                name = pair['baseToken']['name']
-                symbol = pair['baseToken']['symbol']
-                price = float(pair['priceUsd'])
-                volume = pair['volume']['h24']
-                price_change = float(pair['priceChange']['h1'])
+if st.button("📈 সম্পূর্ণ বিশ্লেষণ দেখুন"):
+    try:
+        df = get_binance_klines(symbol=symbol_input)
+        price_series = df["close"]
+        rsi = calculate_rsi(price_series).iloc[-1]
+        macd, signal_line = calculate_macd(price_series)
+        price_change = ((price_series.iloc[-1] - price_series.iloc[-2]) / price_series.iloc[-2]) * 100
+        volume = df["volume"].iloc[-1]
 
-                history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-                series = pd.Series(history)
-                rsi = calculate_rsi(series).iloc[-1]
-                macd, signal_line = calculate_macd(series)
-                ema = calculate_ema(series).iloc[-1]
-                decision = ai_decision(rsi, macd, signal_line, price_change, volume)
+        decision = ai_decision(rsi, macd, signal_line, price_change, volume)
 
-                st.markdown(f"""
-                ### ✅ {name} ({symbol}) বিশ্লেষণ (DexScreener)
-                - 💵 দাম: ${price:.6f}
-                - 📊 ১ ঘণ্টায় পরিবর্তন: {price_change:.2f}%
-                - 📦 ভলিউম: ${volume:,}
-                - 📈 RSI: {rsi:.2f}
-                - 📉 MACD: {macd.iloc[-1]:.4f}, Signal: {signal_line.iloc[-1]:.4f}
-                - 📊 EMA: {ema:.4f}
-                ---
-                🤖 **AI সিদ্ধান্ত**:
-                {decision}
-                """)
-        except Exception as e:
-            st.error(f"সমস্যা হয়েছে: {e}")
+        st.subheader("📊 টেকনিক্যাল বিশ্লেষণ")
+        st.markdown(f"""
+        - 💵 **শেষ দাম:** ${price_series.iloc[-1]:.6f}  
+        - 📉 **RSI:** {rsi:.2f}  
+        - 🧠 **AI সিদ্ধান্ত:** {decision}
+        """)
 
-# -------- CoinGecko --------
-elif option == "CoinGecko":
-    cg_name = st.text_input("🔍 CoinGecko টোকেনের নাম লিখুন (যেমন: pepe, pi, bonk)")
-    if st.button("🔎 বিশ্লেষণ") and cg_name:
-        try:
-            search_url = f"https://api.coingecko.com/api/v3/search?query={cg_name.lower()}"
-            search_res = requests.get(search_url).json()
-            if not search_res['coins']:
-                st.error("কোনও ফলাফল পাওয়া যায়নি।")
-            else:
-                token_id = search_res['coins'][0]['id']
-                coin_url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&market_data=true"
-                data = requests.get(coin_url).json()
-
-                name = data['name']
-                symbol = data['symbol'].upper()
-                price = data['market_data']['current_price']['usd']
-                volume = data['market_data']['total_volume']['usd']
-                price_change = data['market_data']['price_change_percentage_1h_in_currency']['usd']
-
-                # আনুমানিক ইতিহাস তৈরি (আসল API না থাকায়)
-                history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
-                series = pd.Series(history)
-                rsi = calculate_rsi(series).iloc[-1]
-                macd, signal_line = calculate_macd(series)
-                ema = calculate_ema(series).iloc[-1]
-                decision = ai_decision(rsi, macd, signal_line, price_change, volume)
-
-                st.markdown(f"""
-                ### ✅ {name} ({symbol}) বিশ্লেষণ (CoinGecko)
-                - 💵 দাম: ${price:.6f}
-                - 📊 ১ ঘণ্টায় পরিবর্তন: {price_change:.2f}%
-                - 📦 ভলিউম: ${volume:,}
-                - 📈 RSI: {rsi:.2f}
-                - 📉 MACD: {macd.iloc[-1]:.4f}, Signal: {signal_line.iloc[-1]:.4f}
-                - 📊 EMA: {ema:.4f}
-                ---
-                🤖 **AI সিদ্ধান্ত**:
-                {decision}
-                """)
-        except Exception as e:
-            st.error(f"API তে সমস্যা হয়েছে: {e}")
-            
+        st.subheader("🕯️ ক্যান্ডেল প্যাটার্ন বিশ্লেষণ")
+        patterns = detect_patterns(df)
+        if patterns:
+            for p in patterns:
+                st.success(p)
+        else:
+            st.info("📭 কোনো শক্তিশালী ক্যান্ডেল প্যাটার্ন পাওয়া যায়নি")
+    except Exception as e:
+        st.error(f"❌ সমস্যা হয়েছে: {e}")
+        
