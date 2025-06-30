@@ -2,30 +2,10 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-import ta
+import random
 
-# ইন্ডিকেটর হিসাব করার ফাংশন
-def calculate_indicators(prices):
-    df = pd.DataFrame({'close': prices})
-    df['rsi'] = ta.momentum.RSIIndicator(close=df['close']).rsi()
-    macd = ta.trend.MACD(close=df['close'])
-    df['macd'] = macd.macd()
-    df['macd_signal'] = macd.macd_signal()
-    df['ema'] = ta.trend.EMAIndicator(close=df['close']).ema_indicator()
-    return df
-
-# AI ডিসিশন ফাংশন
-def ai_decision(rsi, macd_val, macd_signal, price_change, volume):
-    trend_signal = "📈" if macd_val > macd_signal else "📉"
-
-    if rsi > 70 and price_change < 0:
-        return f"🔴 SELL - Overbought + দাম কমছে {trend_signal}"
-    elif rsi < 30 and price_change > 0:
-        return f"🟢 BUY - Oversold + দাম বাড়ছে {trend_signal}"
-    elif 30 <= rsi <= 70 and abs(price_change) < 1:
-        return f"🟡 HOLD - মার্কেট শান্ত {trend_signal}"
-    else:
-        return f"⚠️ অনিশ্চিত অবস্থান, RSI: {rsi:.2f} {trend_signal}"
+from technicals import calculate_rsi, calculate_ema, calculate_macd, calculate_bollinger_bands
+from ai_logic import ai_decision, bollinger_breakout_signal
 
 # Streamlit UI সেটআপ
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
@@ -36,22 +16,28 @@ option = st.radio(
     ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
 )
 
-# বিশ্লেষণ ফাংশন
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
-    import random
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
         for i in range(30)
     ]
     price_series = pd.Series(history)
-    df = calculate_indicators(price_series)
 
-    rsi = df['rsi'].iloc[-1]
-    macd = df['macd'].iloc[-1]
-    signal = df['macd_signal'].iloc[-1]
-    ema = df['ema'].iloc[-1]
+    # RSI, EMA, MACD হিসাব
+    rsi = calculate_rsi(price_series).iloc[-1]
+    ema = calculate_ema(price_series).iloc[-1]
+    macd, signal = calculate_macd(price_series)
+    macd_val = macd.iloc[-1]
+    signal_val = signal.iloc[-1]
 
+    # Bollinger Bands হিসাব
+    upper_band, middle_band, lower_band = calculate_bollinger_bands(price_series)
+    upper_band_val = upper_band.iloc[-1]
+    lower_band_val = lower_band.iloc[-1]
+
+    # AI সিদ্ধান্ত ও ব্রেকআউট সিগন্যাল
     decision = ai_decision(rsi, macd, signal, price_change, volume)
+    bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
     st.markdown(f"""
@@ -64,10 +50,17 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 ### 📉 Indicators:
 - RSI: {rsi:.2f}
 - EMA: {ema:.4f}
-- MACD: {macd:.4f}, Signal: {signal:.4f}
+- MACD: {macd_val:.4f}, Signal: {signal_val:.4f}
+
+### 📈 Bollinger Bands:
+- Upper Band: {upper_band_val:.4f}
+- Lower Band: {lower_band_val:.4f}
 
 ### 🤖 AI সিদ্ধান্ত:
 {decision}
+
+### 📢 ব্রেকআউট সিগন্যাল:
+{bb_signal}
 """)
 
 # Option 1: CoinGecko থেকে নাম দিয়ে
@@ -79,7 +72,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
             search_api = f"https://api.coingecko.com/api/v3/search?query={user_query}"
             res = requests.get(search_api)
             data = res.json()
-            coins = data['coins']
+            coins = data.get('coins', [])
             if not coins:
                 st.warning("😓 টোকেন পাওয়া যায়নি")
             else:
@@ -109,7 +102,6 @@ elif option == "DexScreener Address দিয়ে":
 
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
         try:
-            # DexScreener API - টোকেন অ্যাড্রেস দিয়ে চেইন অটো ডিটেক্ট
             url = f"https://api.dexscreener.com/latest/dex/search/?q={token_address}"
             res = requests.get(url)
             data = res.json()
@@ -117,7 +109,6 @@ elif option == "DexScreener Address দিয়ে":
             if not data or 'pairs' not in data or len(data['pairs']) == 0:
                 st.error("⚠️ এই অ্যাড্রেসের জন্য কোনো টোকেন ডেটা পাওয়া যায়নি। সঠিক অ্যাড্রেস দিন বা পরে আবার চেষ্টা করুন।")
             else:
-                # প্রথম পেয়ারটাই দেখাচ্ছি
                 pair = data['pairs'][0]
                 name = pair['baseToken']['name']
                 symbol = pair['baseToken']['symbol']
