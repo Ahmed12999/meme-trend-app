@@ -2,3 +2,5 @@ streamlit
 requests
 openai
 python-dotenv
+pip install -r requirements.txt
+python-dotenv
