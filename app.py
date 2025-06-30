@@ -1,65 +1,47 @@
+# app.py
+
 import streamlit as st
-import requests
-import json
-import os
+import openai
 
-# 🧠 OpenAI API Key (Cloud এ রাখলে SECRET হিসেবে রাখো)
-OPENAI_API_KEY = os.getenv("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")
+# তোমার OpenAI Key বসাও
+openai.api_key = "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"
 
-st.set_page_config(page_title="AI Coin Advisor (বাংলা)", layout="centered")
-st.title("🧠 AI Coin Advisor (বাংলা)")
+# এক্সাম্পল ইনপুট (তুমি এখানে API থেকে আসা ডেটা বসাতে পারো)
+coin_data = {
+    "name": "PEPE",
+    "rsi": 28,
+    "macd": "bullish",
+    "price_change_1h": 4.3,
+    "suggestion": "BUY",
+    "hold_time": "1 hour"
+}
 
-coin = st.text_input("🔎 কয়েনের নাম লিখো (যেমন: btc, eth, pepe, sol)").lower()
+def generate_ai_recommendation(data):
+    prompt = f"""
+    নিচের ডেটা বিশ্লেষণ করে একজন প্রোফেশনাল ট্রেডার হিসেবে বাংলায় পরামর্শ দাও।
 
+    Coin: {data['name']}
+    RSI: {data['rsi']}
+    MACD: {data['macd']}
+    ১ ঘণ্টায় দামের পরিবর্তন: {data['price_change_1h']}%
+    সুপারিশ: {data['suggestion']}
+    হোল্ড রাখার সময়: {data['hold_time']}
+
+    সংক্ষেপে ও স্পষ্ট করে বলো। ভয় না দেখিয়ে আত্মবিশ্বাসী ভাষায় বলো।
+    """
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",  # চাইলে gpt-3.5-turbo ব্যবহার করতে পারো
+        messages=[
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    return response.choices[0].message['content']
+
+# Streamlit UI
+st.title("🧠 AI Coin Advisor")
 if st.button("📊 AI বিশ্লেষণ দেখাও"):
-    if not coin:
-        st.warning("দয়া করে একটি কয়েন নাম লিখো!")
-    else:
-        with st.spinner("AI বিশ্লেষণ আনছে..."):
-
-            url = f"https://api.coingecko.com/api/v3/coins/{coin}?localization=false&tickers=false&market_data=true"
-            response = requests.get(url)
-
-            if response.status_code != 200:
-                st.error("❌ Coin পাওয়া যায়নি বা API error")
-            else:
-                data = response.json()
-                name = data["name"]
-                price = data["market_data"]["current_price"]["usd"]
-                change_1h = data["market_data"]["price_change_percentage_1h_in_currency"]["usd"]
-                change_24h = data["market_data"]["price_change_percentage_24h_in_currency"]["usd"]
-                market_cap = data["market_data"]["market_cap"]["usd"] / 1e9
-
-                prompt = f"""
-{name} কয়েনের বর্তমান মূল্য ${price:.3f}, 
-১ ঘণ্টায় পরিবর্তন {change_1h:.2f}%, 
-২৪ ঘণ্টায় পরিবর্তন {change_24h:.2f}%, 
-এবং মার্কেট ক্যাপ ${market_cap:.2f}B।
-
-উপরের তথ্য বিশ্লেষণ করে বাংলায় বলো — এখন কিনবো, বিক্রি করবো, না হোল্ড করবো। ট্রেডারের মত আত্মবিশ্বাসী ভাষায় ব্যাখ্যা করো।
-"""
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {OPENAI_API_KEY}"
-                }
-
-                payload = {
-                    "model": "gpt-3.5-turbo",
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "max_tokens": 200,
-                    "temperature": 0.7
-                }
-
-                ai_res = requests.post("https://api.openai.com/v1/chat/completions",
-                                       headers=headers, data=json.dumps(payload))
-
-                if ai_res.status_code == 200:
-                    ai_text = ai_res.json()['choices'][0]['message']['content']
-                    st.success("✅ AI বিশ্লেষণ:")
-                    st.markdown(f"**{ai_text}**")
-                else:
-                    st.error(f"❌ GPT API Error: {ai_res.status_code}")
-                    
+    with st.spinner("AI বিশ্লেষণ করছে..."):
+        message = generate_ai_recommendation(coin_data)
+        st.success(message)
