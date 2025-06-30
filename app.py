@@ -40,7 +40,14 @@ option = st.radio(
 # বিশ্লেষণ ফাংশন
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
     # দাম সিরিজ বানানো
-    history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
+    import random
+
+history = [
+    price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
+    for i in range(30)
+]
+price_series = pd.Series(history)
+
     price_series = pd.Series(history)
     df = calculate_indicators(price_series)
 
