@@ -105,30 +105,30 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
 
 # Option 2: DexScreener Address দিয়ে
 elif option == "DexScreener Address দিয়ে":
-    token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
+    token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
 
-    if st.button("📊 বিশ্লেষণ করুন") and token_address:
-        try:
-            # DexScreener API - টোকেন অ্যাড্রেস দিয়ে চেইন অটো ডিটেক্ট
-            url = f"https://api.dexscreener.com/latest/dex/search/?q={token_address}"
-            res = requests.get(url)
-            data = res.json()
+    if st.button("📊 বিশ্লেষণ করুন") and token_address:
+        try:
+            # DexScreener API - টোকেন অ্যাড্রেস দিয়ে চেইন অটো ডিটেক্ট
+            url = f"https://api.dexscreener.com/latest/dex/search/?q={token_address}"
+            res = requests.get(url)
+            data = res.json()
 
-            if not data or 'pairs' not in data or len(data['pairs']) == 0:
-                st.error("⚠️ এই অ্যাড্রেসের জন্য কোনো টোকেন ডেটা পাওয়া যায়নি। সঠিক অ্যাড্রেস দিন বা পরে আবার চেষ্টা করুন।")
-            else:
-                # প্রথম পেয়ারটাই দেখাচ্ছি
-                pair = data['pairs'][0]
-                name = pair['baseToken']['name']
-                symbol = pair['baseToken']['symbol']
-                price = float(pair['priceUsd']) if pair['priceUsd'] else 0
-                price_change = float(pair['priceChange']['h1']) if pair['priceChange'] and pair['priceChange']['h1'] else 0
-                volume = float(pair['volume']['h24']) if pair['volume'] and pair['volume']['h24'] else 0
-                mcap = pair.get('fdv', 'N/A')
-                chain = pair.get('chainId', 'Unknown')
+            if not data or 'pairs' not in data or len(data['pairs']) == 0:
+                st.error("⚠️ এই অ্যাড্রেসের জন্য কোনো টোকেন ডেটা পাওয়া যায়নি। সঠিক অ্যাড্রেস দিন বা পরে আবার চেষ্টা করুন।")
+            else:
+                # প্রথম পেয়ারটাই দেখাচ্ছি
+                pair = data['pairs'][0]
+                name = pair['baseToken']['name']
+                symbol = pair['baseToken']['symbol']
+                price = float(pair['priceUsd']) if pair['priceUsd'] else 0
+                price_change = float(pair['priceChange']['h1']) if pair['priceChange'] and pair['priceChange']['h1'] else 0
+                volume = float(pair['volume']['h24']) if pair['volume'] and pair['volume']['h24'] else 0
+                mcap = pair.get('fdv', 'N/A')
+                chain = pair.get('chainId', 'Unknown')
 
-                analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
+                analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
 
-        except Exception as e:
-            st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-
+        except Exception as e:
+            st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
+            
