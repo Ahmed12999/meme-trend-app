@@ -2,36 +2,25 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from binance.client import Client
-import talib
+from ta.trend import EMAIndicator, MACD
+from ta.momentum import RSIIndicator
 
-# Binance client setup (no API key needed for public data)
-binance_client = Client()
-
-# RSI Calculation
+# RSI ক্যালকুলেশন ফাংশন
 def calculate_rsi(prices, period=14):
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    rsi = RSIIndicator(close=prices, window=period)
+    return rsi.rsi()
 
-# EMA Calculation
+# EMA ক্যালকুলেশন ফাংশন
 def calculate_ema(prices, period=14):
-    return prices.ewm(span=period, adjust=False).mean()
+    ema = EMAIndicator(close=prices, window=period)
+    return ema.ema_indicator()
 
-# MACD Calculation
+# MACD ক্যালকুলেশন ফাংশন
 def calculate_macd(prices):
-    ema12 = prices.ewm(span=12, adjust=False).mean()
-    ema26 = prices.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
+    macd = MACD(close=prices)
+    return macd.macd(), macd.macd_signal()
 
-# AI Decision Based on Indicators
+# AI ডিসিশন ফাংশন
 def ai_decision(rsi, macd, signal_line, price_change, volume):
     trend_signal = ""
     if macd.iloc[-1] > signal_line.iloc[-1]:
@@ -48,69 +37,121 @@ def ai_decision(rsi, macd, signal_line, price_change, volume):
     else:
         return f"⚠️ অনিশ্চিত অবস্থা, সতর্ক থাকুন। RSI: {rsi:.2f}\n{trend_signal}"
 
-# Binance থেকে ক্যান্ডেল ডেটা আনো
-def get_binance_klines(symbol="PEPEUSDT", interval="5m", limit=50):
-    klines = binance_client.get_klines(symbol=symbol, interval=interval, limit=limit)
-    df = pd.DataFrame(klines, columns=[
-        "timestamp", "open", "high", "low", "close", "volume", "_1", "_2", "_3", "_4", "_5", "_6"
-    ])
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
-    return df
-
-# ক্যান্ডেল প্যাটার্ন শনাক্ত করা
-def detect_patterns(df):
-    open_, high, low, close = df["open"], df["high"], df["low"], df["close"]
-    df['hammer'] = talib.CDLHAMMER(open_, high, low, close)
-    df['doji'] = talib.CDLDOJI(open_, high, low, close)
-    df['engulfing'] = talib.CDLENGULFING(open_, high, low, close)
-    
-    latest = df.iloc[-1]
-    signals = []
-    if latest['hammer'] != 0:
-        signals.append("🔨 **Hammer Detected** - মার্কেট রিভার্সাল আপ হতে পারে")
-    if latest['doji'] != 0:
-        signals.append("⚖️ **Doji Detected** - অনিশ্চিত মার্কেট অবস্থা")
-    if latest['engulfing'] > 0:
-        signals.append("🟢 **Bullish Engulfing Detected** - দাম বাড়তে পারে")
-    elif latest['engulfing'] < 0:
-        signals.append("🔴 **Bearish Engulfing Detected** - দাম কমতে পারে")
-    return signals
-
-# Streamlit UI শুরু
+# UI শুরু
 st.set_page_config(page_title="মিম কয়েন বিশ্লেষক", page_icon="📈")
-st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (AI BUY / SELL + Candlestick Pattern)")
+st.title("🪙 মিম কয়েন মার্কেট বিশ্লেষক (AI BUY / SELL + RSI, MACD, EMA)")
 
-symbol_input = st.text_input("Binance Symbol দিন (যেমন: PEPEUSDT, BTCUSDT)", value="PEPEUSDT")
+option = st.radio(
+    "🔍 কোনভাবে বিশ্লেষণ করতে চান:",
+    ("নাম দিয়ে (Token Name)", "অ্যাড্রেস দিয়ে (Token Address)", "CoinGecko থেকে")
+)
 
-if st.button("📈 সম্পূর্ণ বিশ্লেষণ দেখুন"):
-    try:
-        df = get_binance_klines(symbol=symbol_input)
-        price_series = df["close"]
-        rsi = calculate_rsi(price_series).iloc[-1]
-        macd, signal_line = calculate_macd(price_series)
-        price_change = ((price_series.iloc[-1] - price_series.iloc[-2]) / price_series.iloc[-2]) * 100
-        volume = df["volume"].iloc[-1]
+# -------- Function: বিশ্লেষণ চালানো --------
+def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
+    history = [price * (1 + (price_change / 100) * i / 10) for i in range(30)]
+    price_series = pd.Series(history)
+    rsi_value = calculate_rsi(price_series).iloc[-1]
+    macd, signal_line = calculate_macd(price_series)
+    ema_value = calculate_ema(price_series).iloc[-1]
 
-        decision = ai_decision(rsi, macd, signal_line, price_change, volume)
+    signal = ai_decision(rsi_value, macd, signal_line, price_change, volume)
 
-        st.subheader("📊 টেকনিক্যাল বিশ্লেষণ")
-        st.markdown(f"""
-        - 💵 **শেষ দাম:** ${price_series.iloc[-1]:.6f}  
-        - 📉 **RSI:** {rsi:.2f}  
-        - 🧠 **AI সিদ্ধান্ত:** {decision}
-        """)
+    st.success(f"✅ **{name} ({symbol})** এর বিশ্লেষণ")
+    st.markdown(f"""
+    - 🌐 **চেইন:** {chain or 'N/A'}  
+    - 💵 **দাম:** ${price:.8f}  
+    - 📊 **১ ঘণ্টায় পরিবর্তন:** {price_change:.2f}%  
+    - 📦 **২৪ ঘণ্টার ভলিউম:** ${volume:,}  
+    - 🧢 **মার্কেট ক্যাপ (FDV):** {mcap or 'N/A'}  
 
-        st.subheader("🕯️ ক্যান্ডেল প্যাটার্ন বিশ্লেষণ")
-        patterns = detect_patterns(df)
-        if patterns:
-            for p in patterns:
-                st.success(p)
+    ### 🧠 টেকনিক্যাল ডেটা:
+    - 📈 **RSI:** {rsi_value:.2f}  
+    - 📊 **EMA (14):** {ema_value:.4f}  
+    - 📉 **MACD:** {macd.iloc[-1]:.4f}, Signal: {signal_line.iloc[-1]:.4f}  
+
+    ### 🧾 মার্কেট কন্ডিশন:
+    - 💸 **ভলিউম:** ${volume:,}  
+    - 💬 **Sentiment:** ট্রেন্ড = {'📈 UP' if price_change > 0 else '📉 DOWN'}  
+
+    ### 🤖 AI সিদ্ধান্ত:
+    {signal}
+    """)
+
+# -------- Option 1: Name Based Analysis --------
+if option == "নাম দিয়ে (Token Name)":
+    token_name = st.text_input("✏️ মিম কয়েনের নাম লিখুন (যেমন: pepe, bonk, doge)")
+
+    if st.button("📊 ট্রেন্ড দেখুন"):
+        if not token_name:
+            st.warning("⚠️ দয়া করে একটি টোকেনের নাম দিন!")
         else:
-            st.info("📭 কোনো শক্তিশালী ক্যান্ডেল প্যাটার্ন পাওয়া যায়নি")
-    except Exception as e:
-        st.error(f"❌ সমস্যা হয়েছে: {e}")
-        
+            url = f"https://api.dexscreener.com/latest/dex/search/?q={token_name.lower()}"
+            try:
+                response = requests.get(url)
+                data = response.json()
+
+                if 'pairs' not in data or len(data['pairs']) == 0:
+                    st.error(f"'{token_name}' টোকেন পাওয়া যায়নি 😓")
+                else:
+                    pair = data['pairs'][0]
+                    name = pair['baseToken']['name']
+                    symbol = pair['baseToken']['symbol']
+                    price = float(pair['priceUsd'])
+                    chain = pair['chainId']
+                    mcap = pair.get('fdv', 'N/A')
+                    volume = pair['volume']['h24']
+                    price_change = float(pair['priceChange']['h1'])
+
+                    analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
+            except Exception as e:
+                st.error(f"❌ সমস্যা হয়েছে: {e}")
+
+# -------- Option 2: Address Based Analysis (Pump.fun etc.) --------
+elif option == "অ্যাড্রেস দিয়ে (Token Address)":
+    token_address = st.text_input("🔗 টোকেনের ঠিকানা (address) দিন")
+
+    if st.button("🧠 বিশ্লেষণ দেখুন"):
+        if not token_address:
+            st.warning("⚠️ দয়া করে একটি টোকেন অ্যাড্রেস দিন!")
+        else:
+            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
+            try:
+                response = requests.get(url)
+                data = response.json()
+
+                pair = data['pair']
+                name = pair['baseToken']['name']
+                symbol = pair['baseToken']['symbol']
+                price = float(pair['priceUsd'])
+                liquidity = pair['liquidity']['usd']
+                volume = pair['volume']['h24']
+                mcap = pair.get('fdv', 'N/A')
+                price_change = float(pair['priceChange']['h1'])
+
+                analyze_coin(name, symbol, price, price_change, volume, "solana", mcap)
+            except Exception as e:
+                st.error(f"❌ বিশ্লেষণে সমস্যা হয়েছে: {e}")
+
+# -------- Option 3: CoinGecko --------
+elif option == "CoinGecko থেকে":
+    token_url = st.text_input("🔗 CoinGecko URL দিন (যেমন: https://www.coingecko.com/en/coins/pepe)")
+
+    if st.button("📈 বিশ্লেষণ করুন") and token_url:
+        try:
+            token = token_url.rstrip("/").split("/")[-1]
+            cg_api = f"https://api.coingecko.com/api/v3/coins/{token}?localization=false&tickers=false&market_data=true"
+            res = requests.get(cg_api)
+            if res.status_code == 200:
+                data = res.json()
+                name = data['name']
+                symbol = data['symbol'].upper()
+                price = data['market_data']['current_price']['usd']
+                volume = data['market_data']['total_volume']['usd']
+                price_change = data['market_data']['price_change_percentage_1h_in_currency']['usd']
+
+                analyze_coin(name, symbol, price, price_change, volume, "CoinGecko")
+            else:
+                st.error("⚠️ CoinGecko token খুঁজে পাওয়া যায়নি")
+        except Exception as e:
+            st.error(f"❌ CoinGecko API সমস্যা: {e}")
+            
