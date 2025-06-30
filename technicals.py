@@ -21,8 +21,12 @@ def calculate_macd(prices):
     signal = macd.ewm(span=9, adjust=False).mean()
     return macd, signal
 
-def calculate_bollinger_bands(prices, period=20):
-    upperband, middleband, lowerband = talib.BBANDS(prices, timeperiod=period)
+def calculate_bollinger_bands(prices, period=20, n_std=2):
+    """
+    Bollinger Bands হিসাব করে Talib এর BBANDS ব্যবহার করে
+    Returns: upperband, middleband, lowerband
+    """
+    upperband, middleband, lowerband = talib.BBANDS(prices, timeperiod=period, nbdevup=n_std, nbdevdn=n_std, matype=0)
     return upperband, middleband, lowerband
 
 def detect_candle_pattern(open, high, low, close):
@@ -30,3 +34,4 @@ def detect_candle_pattern(open, high, low, close):
     doji = talib.CDLDOJI(open, high, low, close)
     engulfing = talib.CDLENGULFING(open, high, low, close)
     return {"Hammer": hammer, "Doji": doji, "Engulfing": engulfing}
+    
