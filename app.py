@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import random
 import threading
-import time
 import asyncio
 import json
 import websockets
@@ -13,7 +12,7 @@ import websockets
 from technicals import calculate_rsi, calculate_ema, calculate_macd, calculate_bollinger_bands
 from ai_logic import ai_decision, bollinger_breakout_signal
 
-# প্রতি ৬০ সেকেন্ডে পেজ রিফ্রেশ
+# প্রতি ৬০ সেকেন্ডে পেজ রিফ্রেশ (UI ও API কলের জন্য)
 count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
@@ -24,34 +23,41 @@ option = st.radio("📌 কোন উৎস থেকে বিশ্লেষ�
 )
 
 ws_kline_data = {}
+ws_threads = {}  # থ্রেড ট্র্যাক করার জন্য
 
 async def binance_ws_listener(symbol, interval="1m"):
     ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
-    async with websockets.connect(ws_url) as ws:
-        while True:
-            msg = await ws.recv()
-            msg_json = json.loads(msg)
-            k = msg_json.get('k', {})
-            ws_kline_data[symbol] = {
-                "open": float(k.get('o', 0)),
-                "high": float(k.get('h', 0)),
-                "low": float(k.get('l', 0)),
-                "close": float(k.get('c', 0)),
-                "volume": float(k.get('v', 0)),
-                "isFinal": k.get('x', False)
-            }
+    try:
+        async with websockets.connect(ws_url) as ws:
+            while True:
+                msg = await ws.recv()
+                msg_json = json.loads(msg)
+                k = msg_json.get('k', {})
+                ws_kline_data[symbol] = {
+                    "open": float(k.get('o', 0)),
+                    "high": float(k.get('h', 0)),
+                    "low": float(k.get('l', 0)),
+                    "close": float(k.get('c', 0)),
+                    "volume": float(k.get('v', 0)),
+                    "isFinal": k.get('x', False)
+                }
+    except Exception as e:
+        print(f"WebSocket error for {symbol}: {e}")
 
 def start_ws_thread(symbol):
+    if symbol in ws_threads:
+        # Already running thread for this symbol
+        return
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(binance_ws_listener(symbol))
+    ws_threads[symbol] = threading.Thread(target=loop.run_until_complete, args=(binance_ws_listener(symbol),), daemon=True)
+    ws_threads[symbol].start()
 
 def is_binance_symbol(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
         r = requests.get(url)
         return r.status_code == 200
-    except:
+    except Exception:
         return False
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
@@ -130,16 +136,16 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
 
                         if is_binance_symbol(binance_symbol):
                             st.success(f"Binance-listed coin: {binance_symbol}")
-                            ws_thread = threading.Thread(target=start_ws_thread, args=(binance_symbol,))
-                            ws_thread.daemon = True
-                            ws_thread.start()
+                            start_ws_thread(binance_symbol)  # থ্রেড একবারই চালাবে
 
                             live_price_placeholder = st.empty()
-                            for _ in range(6):
-                                time.sleep(5)
-                                k = ws_kline_data.get(binance_symbol)
-                                if k:
-                                    live_price_placeholder.markdown(f"### 📉 লাইভ প্রাইস: ${k['close']:.6f}")
+                            # WebSocket data থেকে লাইভ প্রাইস দেখাবে যতক্ষণ পেজ রিফ্রেশ না হয়
+                            k = ws_kline_data.get(binance_symbol)
+                            if k:
+                                live_price_placeholder.markdown(f"### 📉 লাইভ প্রাইস: ${k['close']:.6f}")
+                            else:
+                                live_price_placeholder.markdown("... লাইভ প্রাইস লোড হচ্ছে ...")
+
                         else:
                             analyze_coin(name, symbol_raw, price, price_change, volume, "CoinGecko", mcap)
         except Exception as e:
