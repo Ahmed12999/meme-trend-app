@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import requests
 import pandas as pd
 import numpy as np
@@ -11,6 +12,9 @@ import websockets
 
 from technicals import calculate_rsi, calculate_ema, calculate_macd, calculate_bollinger_bands
 from ai_logic import ai_decision, bollinger_breakout_signal
+
+# প্রতি ৬০ সেকেন্ডে পেজ রিফ্রেশ
+count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
