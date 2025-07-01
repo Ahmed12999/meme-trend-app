@@ -8,25 +8,19 @@ import time
 import asyncio
 import json
 import websockets
-from binance.client import Client
 
 from technicals import calculate_rsi, calculate_ema, calculate_macd, calculate_bollinger_bands
 from ai_logic import ai_decision, bollinger_breakout_signal
 
-# Binance Client Init (for symbol check)
-binance_client = Client()
-
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
-option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?", 
+option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?",
     ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
 )
 
-# Binance WebSocket data store
 ws_kline_data = {}
 
-# Binance WebSocket listener
 async def binance_ws_listener(symbol, interval="1m"):
     ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
     async with websockets.connect(ws_url) as ws:
@@ -43,21 +37,19 @@ async def binance_ws_listener(symbol, interval="1m"):
                 "isFinal": k.get('x', False)
             }
 
-# WebSocket Thread launcher
 def start_ws_thread(symbol):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(binance_ws_listener(symbol))
 
-# Binance symbol checker
 def is_binance_symbol(symbol):
+    url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
-        binance_client.get_symbol_ticker(symbol=symbol)
-        return True
+        r = requests.get(url)
+        return r.status_code == 200
     except:
         return False
 
-# Main analysis display
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
@@ -71,7 +63,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     macd_val = macd.iloc[-1]
     signal_val = signal.iloc[-1]
 
-    upper_band, middle_band, lower_band = calculate_bollinger_bands(price_series)
+    upper_band, _, lower_band = calculate_bollinger_bands(price_series)
     upper_band_val = upper_band.iloc[-1]
     lower_band_val = lower_band.iloc[-1]
 
@@ -143,7 +135,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                                 time.sleep(5)
                                 k = ws_kline_data.get(binance_symbol)
                                 if k:
-                                    live_price_placeholder.markdown(f"### 📉 Live Close Price: ${k['close']:.6f}")
+                                    live_price_placeholder.markdown(f"### 📉 লাইভ প্রাইস: ${k['close']:.6f}")
                         else:
                             analyze_coin(name, symbol_raw, price, price_change, volume, "CoinGecko", mcap)
         except Exception as e:
@@ -175,4 +167,4 @@ elif option == "DexScreener Address দিয়ে":
 
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-                
+            
