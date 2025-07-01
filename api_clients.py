@@ -48,3 +48,4 @@ def get_binance_klines(symbol, interval='1m', limit=30):
     except Exception as e:
         print(f"Binance Klines Error: {e}")
         return None
+        
