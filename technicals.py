@@ -30,3 +30,4 @@ def calculate_sma(prices, period=50):
     df = pd.DataFrame({'close': prices})
     sma = df['close'].rolling(window=period).mean()
     return sma
+    
