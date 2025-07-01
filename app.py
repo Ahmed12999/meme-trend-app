@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import requests
 import pandas as pd
+import numpy as np
 import random
 import threading
 import asyncio
@@ -10,7 +11,8 @@ import websockets
 
 from technicals import (
     calculate_rsi, calculate_ema, calculate_macd,
-    calculate_bollinger_bands, calculate_sma
+    calculate_bollinger_bands, calculate_sma,
+    calculate_rsi_divergence, macd_histogram_quantification
 )
 from ai_logic import (
     ai_decision, bollinger_breakout_signal,
@@ -64,7 +66,6 @@ def is_binance_symbol(symbol):
         return False
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
-    # প্রাইস হিসাবের জন্য ঐতিহাসিক ডামি ডেটা
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
         for i in range(30)
@@ -89,8 +90,11 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     # MACD হিষ্টোগ্রাম ট্রেন্ড
     macd_trend_signal = macd_histogram_signal(macd, signal)
 
-    # নতুন AI সিদ্ধান্তে prices পাস করা হয়েছে
-    decision = ai_decision(rsi, macd, signal, price_change, volume, prices=price_series)
+    # নতুন সিগন্যাল: RSI Divergence ও MACD Histogram Quantification
+    rsi_div = calculate_rsi_divergence(price_series)
+    macd_quant = macd_histogram_quantification(macd, signal)
+
+    decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
@@ -115,6 +119,10 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
 ### 🧠 MACD Trend Signal:
 {str(macd_trend_signal)}
+
+### 🔍 নতুন সিগন্যাল:
+- RSI Divergence: {rsi_div}
+- MACD Histogram Quantification: {macd_quant}
 
 ### 🤖 AI সিদ্ধান্ত:
 {decision}
