@@ -9,12 +9,17 @@ import asyncio
 import json
 import websockets
 
-from technicals import calculate_rsi, calculate_ema, calculate_macd, calculate_bollinger_bands
-from ai_logic import ai_decision, bollinger_breakout_signal
+from technicals import (
+    calculate_rsi, calculate_ema, calculate_macd,
+    calculate_bollinger_bands, calculate_sma
+)
+from ai_logic import (
+    ai_decision, bollinger_breakout_signal,
+    calculate_sma_crossover, macd_histogram_signal
+)
 
-# প্রতি ৬০ সেকেন্ডে পেজ রিফ্রেশ (UI ও API কলের জন্য)
+# প্রতি ৬০ সেকেন্ডে পেজ রিফ্রেশ
 count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
-
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
@@ -23,7 +28,7 @@ option = st.radio("📌 কোন উৎস থেকে বিশ্লেষ�
 )
 
 ws_kline_data = {}
-ws_threads = {}  # থ্রেড ট্র্যাক করার জন্য
+ws_threads = {}
 
 async def binance_ws_listener(symbol, interval="1m"):
     ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
@@ -46,7 +51,6 @@ async def binance_ws_listener(symbol, interval="1m"):
 
 def start_ws_thread(symbol):
     if symbol in ws_threads:
-        # Already running thread for this symbol
         return
     loop = asyncio.new_event_loop()
     ws_threads[symbol] = threading.Thread(target=loop.run_until_complete, args=(binance_ws_listener(symbol),), daemon=True)
@@ -77,6 +81,14 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     upper_band_val = upper_band.iloc[-1]
     lower_band_val = lower_band.iloc[-1]
 
+    # নতুন ফিচার: SMA ক্রসওভার
+    sma_short = calculate_sma(price_series, period=20)
+    sma_long = calculate_sma(price_series, period=50)
+    sma_signal = calculate_sma_crossover(sma_short, sma_long)
+
+    # নতুন ফিচার: MACD হিষ্টোগ্রাম ট্রেন্ড
+    macd_trend_signal = macd_histogram_signal(macd, signal)
+
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
 
@@ -97,6 +109,12 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 - Upper Band: {upper_band_val:.4f}
 - Lower Band: {lower_band_val:.4f}
 
+### ⚙️ SMA Crossover:
+{str(sma_signal)}
+
+### 🧠 MACD Trend Signal:
+{str(macd_trend_signal)}
+
 ### 🤖 AI সিদ্ধান্ত:
 {decision}
 
@@ -104,10 +122,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {bb_signal}
 """)
 
-# -------------------- Option 1: CoinGecko --------------------
+# CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     user_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)")
-
     if user_query:
         try:
             search_api = f"https://api.coingecko.com/api/v3/search?query={user_query}"
@@ -119,7 +136,6 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
             else:
                 options = {f"{c['name']} ({c['symbol'].upper()})": c['id'] for c in coins[:10]}
                 selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()))
-
                 if selected:
                     token_id = options[selected]
                     cg_url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
@@ -133,34 +149,28 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                         price_change = coin['market_data']['price_change_percentage_1h_in_currency']['usd']
                         volume = coin['market_data']['total_volume']['usd']
                         mcap = coin['market_data']['fully_diluted_valuation']['usd']
-
                         if is_binance_symbol(binance_symbol):
                             st.success(f"Binance-listed coin: {binance_symbol}")
-                            start_ws_thread(binance_symbol)  # থ্রেড একবারই চালাবে
-
+                            start_ws_thread(binance_symbol)
                             live_price_placeholder = st.empty()
-                            # WebSocket data থেকে লাইভ প্রাইস দেখাবে যতক্ষণ পেজ রিফ্রেশ না হয়
                             k = ws_kline_data.get(binance_symbol)
                             if k:
                                 live_price_placeholder.markdown(f"### 📉 লাইভ প্রাইস: ${k['close']:.6f}")
                             else:
                                 live_price_placeholder.markdown("... লাইভ প্রাইস লোড হচ্ছে ...")
-
                         else:
                             analyze_coin(name, symbol_raw, price, price_change, volume, "CoinGecko", mcap)
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# -------------------- Option 2: DexScreener --------------------
+# DexScreener অপশন
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
-
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
         try:
             url = f"https://api.dexscreener.com/latest/dex/search/?q={token_address}"
             res = requests.get(url)
             data = res.json()
-
             if not data or 'pairs' not in data or len(data['pairs']) == 0:
                 st.error("⚠️ এই অ্যাড্রেসের জন্য কোনো টোকেন ডেটা পাওয়া যায়নি।")
             else:
@@ -172,9 +182,7 @@ elif option == "DexScreener Address দিয়ে":
                 volume = float(pair['volume']['h24']) if pair.get('volume') and pair['volume'].get('h24') else 0
                 mcap = pair.get('fdv', 'N/A')
                 chain = pair.get('chainId', 'Unknown')
-
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
-
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-            
+    
