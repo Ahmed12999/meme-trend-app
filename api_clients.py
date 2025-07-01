@@ -32,3 +32,19 @@ def get_binance_symbol_price(symbol):
     except Exception as e:
         print("Binance Price Error:", e)
         return None
+
+def get_binance_klines(symbol, interval='1m', limit=30):
+    """
+    Binance থেকে ক্যান্ডেলস্টিক ডাটা আনবে (Close price, Open, High, Low, Volume)
+    interval: '1m', '5m', '1h' ইত্যাদি
+    limit: কয়টি ক্যান্ডেল আনা হবে
+    """
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}"
+    try:
+        res = requests.get(url)
+        res.raise_for_status()
+        data = res.json()
+        return data
+    except Exception as e:
+        print(f"Binance Klines Error: {e}")
+        return None
