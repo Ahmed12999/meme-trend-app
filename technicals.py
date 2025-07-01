@@ -21,10 +21,4 @@ def calculate_macd(prices):
 def calculate_bollinger_bands(prices, period=20):
     df = pd.DataFrame({'close': prices})
     bb_indicator = ta.volatility.BollingerBands(close=df['close'], window=period)
-    upperband = bb_indicator.bollinger_hband()
-    middleband = bb_indicator.bollinger_mavg()
-    lowerband = bb_indicator.bollinger_lband()
-    return upperband, middleband, lowerband
-
-def detect_candle_pattern(open_prices, high_prices, low_prices, close_prices):
-    return {}
+    upperband = bb_indic_
