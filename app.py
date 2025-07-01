@@ -14,19 +14,20 @@ from technicals import (
     calculate_bollinger_bands, calculate_sma,
     detect_rsi_divergence, macd_histogram_strength
 )
+
 from ai_logic import (
     ai_decision, bollinger_breakout_signal,
     calculate_sma_crossover, macd_histogram_signal
 )
 
-# প্রতি ৬০ সেকেন্ডে রিফ্রেশ
-count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
+# প্রতি ৬০ সেকেন্ডে পেজ রিফ্রেশ
+st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
-option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?",
-    ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
-)
+option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?", (
+    "CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে"
+))
 
 ws_kline_data = {}
 ws_threads = {}
@@ -89,9 +90,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     macd_trend_signal = macd_histogram_signal(macd, signal)
 
-    # নতুন: RSI divergence এবং MACD histogram strength
-    rsi_div_detected, rsi_div_msg = detect_rsi_divergence(price_series, rsi_series)
-    macd_quant_msg, macd_quant_score = macd_histogram_strength(macd, signal)
+    # ✅ নতুন: RSI Divergence এবং MACD Histogram Strength
+    rsi_div_found, rsi_div_msg = detect_rsi_divergence(price_series, rsi_series)
+    macd_hist_msg, macd_hist_score = macd_histogram_strength(macd, signal)
 
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
@@ -120,8 +121,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {str(macd_trend_signal)}
 
 ### 🔍 নতুন সিগন্যাল:
-- RSI Divergence: {rsi_div_msg}
-- MACD Histogram Quantification: {macd_quant_msg}
+- {rsi_div_msg}
+- {macd_hist_msg}
 
 ### 🤖 AI সিদ্ধান্ত:
 {decision}
@@ -130,7 +131,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {bb_signal}
 """)
 
-# ========== CoinGecko অপশন ==========
+# ================= CoinGecko Analysis =================
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     user_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)")
     if user_query:
@@ -171,7 +172,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# ========== DexScreener অপশন ==========
+# ================= DexScreener Analysis =================
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
