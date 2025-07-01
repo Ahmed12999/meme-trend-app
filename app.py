@@ -2,7 +2,6 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import requests
 import pandas as pd
-import numpy as np
 import random
 import threading
 import asyncio
@@ -65,6 +64,7 @@ def is_binance_symbol(symbol):
         return False
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
+    # প্রাইস হিসাবের জন্য ঐতিহাসিক ডামি ডেটা
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
         for i in range(30)
@@ -81,15 +81,16 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     upper_band_val = upper_band.iloc[-1]
     lower_band_val = lower_band.iloc[-1]
 
-    # নতুন ফিচার: SMA ক্রসওভার
+    # SMA ক্রসওভার
     sma_short = calculate_sma(price_series, period=20)
     sma_long = calculate_sma(price_series, period=50)
     sma_signal = calculate_sma_crossover(sma_short, sma_long)
 
-    # নতুন ফিচার: MACD হিষ্টোগ্রাম ট্রেন্ড
+    # MACD হিষ্টোগ্রাম ট্রেন্ড
     macd_trend_signal = macd_histogram_signal(macd, signal)
 
-    decision = ai_decision(rsi, macd, signal, price_change, volume)
+    # নতুন AI সিদ্ধান্তে prices পাস করা হয়েছে
+    decision = ai_decision(rsi, macd, signal, price_change, volume, prices=price_series)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
