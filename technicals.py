@@ -21,4 +21,12 @@ def calculate_macd(prices):
 def calculate_bollinger_bands(prices, period=20):
     df = pd.DataFrame({'close': prices})
     bb_indicator = ta.volatility.BollingerBands(close=df['close'], window=period)
-    upperband = bb_indic_
+    upperband = bb_indicator.bollinger_hband()
+    middleband = bb_indicator.bollinger_mavg()
+    lowerband = bb_indicator.bollinger_lband()
+    return upperband, middleband, lowerband
+
+def calculate_sma(prices, period=50):
+    df = pd.DataFrame({'close': prices})
+    sma = df['close'].rolling(window=period).mean()
+    return sma
