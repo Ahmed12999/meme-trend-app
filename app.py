@@ -12,7 +12,7 @@ import websockets
 from technicals import (
     calculate_rsi, calculate_ema, calculate_macd,
     calculate_bollinger_bands, calculate_sma,
-    calculate_rsi_divergence, macd_histogram_quantification
+    detect_rsi_divergence, macd_histogram_strength
 )
 from ai_logic import (
     ai_decision, bollinger_breakout_signal,
@@ -72,7 +72,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     ]
     price_series = pd.Series(history)
 
-    rsi = calculate_rsi(price_series).iloc[-1]
+    rsi_series = calculate_rsi(price_series)
+    rsi = rsi_series.iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
     macd, signal = calculate_macd(price_series)
     macd_val = macd.iloc[-1]
@@ -91,8 +92,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     macd_trend_signal = macd_histogram_signal(macd, signal)
 
     # নতুন সিগন্যাল: RSI Divergence ও MACD Histogram Quantification
-    rsi_div = calculate_rsi_divergence(price_series)
-    macd_quant = macd_histogram_quantification(macd, signal)
+    rsi_div_detected, rsi_div_msg = detect_rsi_divergence(price_series, rsi_series)
+    macd_quant_msg, macd_quant_score = macd_histogram_strength(macd, signal)
 
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
@@ -121,8 +122,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {str(macd_trend_signal)}
 
 ### 🔍 নতুন সিগন্যাল:
-- RSI Divergence: {rsi_div}
-- MACD Histogram Quantification: {macd_quant}
+- RSI Divergence: {rsi_div_msg}
+- MACD Histogram Quantification: {macd_quant_msg}
 
 ### 🤖 AI সিদ্ধান্ত:
 {decision}
