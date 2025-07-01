@@ -1,9 +1,8 @@
-from technicals import calculate_rsi
+import pandas as pd
 
-def ai_decision(rsi, macd, signal, price_change, volume, prices=None):
+def ai_decision(rsi, macd, signal, price_change, volume):
     decision = ""
 
-    # RSI বিশ্লেষণ
     if rsi < 30:
         decision += "📉 RSI কম (Oversold)। দাম বাড়ার সম্ভাবনা আছে।\n"
     elif rsi > 70:
@@ -11,7 +10,6 @@ def ai_decision(rsi, macd, signal, price_change, volume, prices=None):
     else:
         decision += "📊 RSI মাঝামাঝি, মার্কেট সাইডওয়ে থাকতে পারে।\n"
 
-    # MACD বিশ্লেষণ
     if macd.iloc[-1] > signal.iloc[-1]:
         decision += "✅ MACD bullish crossover (Buy signal)।\n"
     elif macd.iloc[-1] < signal.iloc[-1]:
@@ -19,7 +17,6 @@ def ai_decision(rsi, macd, signal, price_change, volume, prices=None):
     else:
         decision += "⏸️ MACD নিরপেক্ষ।\n"
 
-    # প্রাইস চেঞ্জ বিশ্লেষণ
     if price_change > 1:
         decision += f"🚀 1h প্রাইস +{price_change:.2f}% — শক্তিশালী মুভমেন্ট!\n"
     elif price_change < -1:
@@ -27,36 +24,54 @@ def ai_decision(rsi, macd, signal, price_change, volume, prices=None):
     else:
         decision += f"⏳ 1h প্রাইস পরিবর্তন খুব কম।\n"
 
-    # ভলিউম স্পাইক ডিটেকশন
-    avg_volume = 1000000  # প্রয়োজনমত পরিবর্তন করো
+    avg_volume = 1000000
     if volume > avg_volume * 1.5:
         decision += "📈 ভলিউম স্পাইক! ট্রেডে উচ্চ সক্রিয়তা চলছে।\n"
     else:
         decision += "📉 ভলিউম স্বাভাবিক।\n"
 
-    # নতুন ফিচার: RSI Divergence ও MACD Histogram Quantification
-    if prices is not None:
-        from technicals import detect_rsi_divergence, macd_histogram_strength
-        rsi_series = calculate_rsi(prices)
-        rsi_div_found, rsi_div_msg = detect_rsi_divergence(prices, rsi_series)
-        macd_hist_msg, macd_hist_score = macd_histogram_strength(macd, signal)
-
-        decision += f"\n{rsi_div_msg}\n"
-        decision += f"{macd_hist_msg}\n"
-    else:
-        rsi_div_found = False
-        macd_hist_score = 0
-
-    # AI চূড়ান্ত সিদ্ধান্তে নতুন লজিক
     if rsi < 35 and macd.iloc[-1] > signal.iloc[-1] and volume > avg_volume:
-        if prices is not None and rsi_div_found and macd_hist_score > 0:
-            decision += "\n🟢 **AI পরামর্শ: শক্তিশালী কিনুন সিগন্যাল (RSI Divergence ও MACD Histogram অনুমোদিত)।**"
-        else:
-            decision += "\n🟢 **AI পরামর্শ: এখন দাম বাড়তে পারে, ট্রেড নিন।**"
+        decision += "\n🟢 **AI পরামর্শ: এখন দাম বাড়তে পারে, ট্রেড নিন।**"
     elif rsi > 70 and macd.iloc[-1] < signal.iloc[-1]:
         decision += "\n🔴 **AI পরামর্শ: দাম অনেক বেড়েছে, এখন সেল বা অপেক্ষা করুন।**"
     else:
         decision += "\n🟡 **AI পরামর্শ: মার্কেট অনিশ্চিত, কিছুক্ষণ অপেক্ষা করুন।**"
 
     return decision
-    
+
+
+def bollinger_breakout_signal(price, upper_band, lower_band):
+    if price > upper_band:
+        return "🚨 দাম Upper Bollinger Band এর উপরে — Breakout হতে পারে!"
+    elif price < lower_band:
+        return "🔻 দাম Lower Bollinger Band এর নিচে — Sell Pressure!"
+    else:
+        return "📊 দাম Bollinger Band এর ভেতরে — স্বাভাবিক গতিবিধি।"
+
+
+def calculate_sma_crossover(short_sma, long_sma):
+    if len(short_sma) < 2 or len(long_sma) < 2:
+        return "⚪ SMA সিগন্যাল বিশ্লেষণের জন্য যথেষ্ট ডেটা নেই।"
+
+    prev_short = short_sma.iloc[-2]
+    prev_long = long_sma.iloc[-2]
+    curr_short = short_sma.iloc[-1]
+    curr_long = long_sma.iloc[-1]
+
+    if prev_short < prev_long and curr_short > curr_long:
+        return "🟢 SMA ক্রসওভার - Buy সিগন্যাল"
+    elif prev_short > prev_long and curr_short < curr_long:
+        return "🔴 SMA ডেথক্রস - Sell সিগন্যাল"
+    else:
+        return "⚪ SMA সিগন্যাল নেই"
+
+
+def macd_histogram_signal(macd, signal):
+    histogram = macd - signal
+    if histogram.iloc[-1] > 0 and histogram.iloc[-2] <= 0:
+        return "🟢 MACD হিষ্টোগ্রাম ইতিবাচক প্রবণতা শুরু করেছে।"
+    elif histogram.iloc[-1] < 0 and histogram.iloc[-2] >= 0:
+        return "🔴 MACD হিষ্টোগ্রাম নেতিবাচক প্রবণতা শুরু করেছে।"
+    else:
+        return "⚪ MACD হিষ্টোগ্রাম স্থিতিশীল।"
+        
