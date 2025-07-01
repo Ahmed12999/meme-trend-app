@@ -31,4 +31,16 @@ def ai_decision(rsi, macd, signal, price_change, volume):
     elif rsi > 70 and macd.iloc[-1] < signal.iloc[-1]:
         decision += "\n🔴 **AI পরামর্শ: দাম অনেক বেড়েছে, এখন সেল বা অপেক্ষা করুন।**"
     else:
-        decision += "\n🟡 **AI পরামর্শ:**
+        decision += "\n🟡 **AI পরামর্শ: মার্কেট অনিশ্চিত, কিছুক্ষণ অপেক্ষা করুন।**"
+
+    return decision
+
+
+def bollinger_breakout_signal(price, upper_band, lower_band):
+    if price > upper_band:
+        return "🚨 দাম Upper Bollinger Band এর উপরে — Breakout হতে পারে!"
+    elif price < lower_band:
+        return "🔻 দাম Lower Bollinger Band এর নিচে — Sell Pressure!"
+    else:
+        return "📊 দাম Bollinger Band এর ভেতরে — স্বাভাবিক গতিবিধি।"
+        
