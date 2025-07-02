@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 import requests
 import pandas as pd
 import numpy as np
@@ -20,8 +19,6 @@ from ai_logic import (
     calculate_sma_crossover, macd_histogram_signal
 )
 
-# ✅ রিফ্রেশ প্রতি ৬০ সেকেন্ডে
-count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
@@ -136,8 +133,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
 # ✅ CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
-    st.text_input("🔎 টোকেনের নাম লিখুন", key="input_query")
-
+    st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন", value=st.session_state.input_query)
     if st.session_state.input_query:
         try:
             search_api = f"https://api.coingecko.com/api/v3/search?query={st.session_state.input_query}"
@@ -148,7 +144,8 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                 st.warning("😓 টোকেন পাওয়া যায়নি")
             else:
                 options = {f"{c['name']} ({c['symbol'].upper()})": c['id'] for c in coins[:10]}
-                selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()), key="selected_token")
+                selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()), index=0 if st.session_state.selected_token == "" else list(options.keys()).index(st.session_state.selected_token))
+                st.session_state.selected_token = selected
                 token_id = options[selected]
 
                 cg_url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
@@ -176,7 +173,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# ✅ DexScreener অপশন (চলতি কোড, ভবিষ্যতে Axiom এ রূপান্তর সম্ভব)
+# ✅ DexScreener অপশন
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
@@ -198,4 +195,4 @@ elif option == "DexScreener Address দিয়ে":
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-                
+            
