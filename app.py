@@ -14,28 +14,27 @@ from technicals import (
     calculate_bollinger_bands, calculate_sma,
     detect_rsi_divergence, macd_histogram_strength
 )
+
 from ai_logic import (
     ai_decision, bollinger_breakout_signal,
     calculate_sma_crossover, macd_histogram_signal
 )
 
-# ✅ Session state fallback values
-if "token_query" not in st.session_state:
-    st.session_state.token_query = ""
-if "selected_token" not in st.session_state:
-    st.session_state.selected_token = ""
-
-# ✅ Auto refresh (60s) while keeping session_state
-count = st_autorefresh(interval=60000, limit=None, key="autorefresh")
-
+# ✅ রিফ্রেশ
+count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
-option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?", 
+# ✅ Session state init
+if "input_query" not in st.session_state:
+    st.session_state.input_query = ""
+if "selected_token" not in st.session_state:
+    st.session_state.selected_token = ""
+
+option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?",
     ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
 )
 
-# 🎯 WebSocket buffer (Binance Live)
 ws_kline_data = {}
 ws_threads = {}
 
@@ -80,8 +79,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     ]
     price_series = pd.Series(history)
 
-    rsi_series = calculate_rsi(price_series)
-    rsi = rsi_series.iloc[-1]
+    rsi = calculate_rsi(price_series).iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
     macd, signal = calculate_macd(price_series)
     macd_val = macd.iloc[-1]
@@ -91,13 +89,15 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     upper_band_val = upper_band.iloc[-1]
     lower_band_val = lower_band.iloc[-1]
 
-    sma_short = calculate_sma(price_series, 20)
-    sma_long = calculate_sma(price_series, 50)
+    sma_short = calculate_sma(price_series, period=20)
+    sma_long = calculate_sma(price_series, period=50)
     sma_signal = calculate_sma_crossover(sma_short, sma_long)
 
     macd_trend_signal = macd_histogram_signal(macd, signal)
-    rsi_div_bool, rsi_div_msg = detect_rsi_divergence(price_series, rsi_series)
-    macd_msg, macd_strength = macd_histogram_strength(macd, signal)
+
+    # নতুন সিগন্যাল
+    _, rsi_div = detect_rsi_divergence(price_series, calculate_rsi(price_series))
+    macd_quant, _ = macd_histogram_strength(macd, signal)
 
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
@@ -126,8 +126,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {str(macd_trend_signal)}
 
 ### 🔍 নতুন সিগন্যাল:
-- RSI Divergence: {rsi_div_msg}
-- MACD Histogram Quantification: {macd_msg}
+- RSI Divergence: {rsi_div}
+- MACD Histogram Quantification: {macd_quant}
 
 ### 🤖 AI সিদ্ধান্ত:
 {decision}
@@ -138,11 +138,10 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
 # ✅ CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
-    st.session_state.token_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)", value=st.session_state.token_query, key="token_query")
-
-    if st.session_state.token_query:
+    st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন", value=st.session_state.input_query)
+    if st.session_state.input_query:
         try:
-            search_api = f"https://api.coingecko.com/api/v3/search?query={st.session_state.token_query}"
+            search_api = f"https://api.coingecko.com/api/v3/search?query={st.session_state.input_query}"
             res = requests.get(search_api)
             data = res.json()
             coins = data.get('coins', [])
@@ -150,10 +149,8 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                 st.warning("😓 টোকেন পাওয়া যায়নি")
             else:
                 options = {f"{c['name']} ({c['symbol'].upper()})": c['id'] for c in coins[:10]}
-                if not st.session_state.selected_token or st.session_state.selected_token not in options:
-                    st.session_state.selected_token = list(options.keys())[0]
-
-                selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()), key="selected_token")
+                selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()), index=0 if st.session_state.selected_token == "" else list(options.keys()).index(st.session_state.selected_token))
+                st.session_state.selected_token = selected
                 token_id = options[selected]
 
                 cg_url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
@@ -167,21 +164,21 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                     price_change = coin['market_data']['price_change_percentage_1h_in_currency']['usd']
                     volume = coin['market_data']['total_volume']['usd']
                     mcap = coin['market_data']['fully_diluted_valuation']['usd']
+
                     if is_binance_symbol(binance_symbol):
                         st.success(f"Binance-listed coin: {binance_symbol}")
                         start_ws_thread(binance_symbol)
-                        live_price_placeholder = st.empty()
                         k = ws_kline_data.get(binance_symbol)
                         if k:
-                            live_price_placeholder.markdown(f"### 📉 লাইভ প্রাইস: ${k['close']:.6f}")
+                            st.markdown(f"### 📉 লাইভ প্রাইস: ${k['close']:.6f}")
                         else:
-                            live_price_placeholder.markdown("... লাইভ প্রাইস লোড হচ্ছে ...")
+                            st.markdown("... লাইভ প্রাইস লোড হচ্ছে ...")
                     else:
                         analyze_coin(name, symbol_raw, price, price_change, volume, "CoinGecko", mcap)
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# ✅ DexScreener অপশন
+# ✅ DexScreener অপশন (চলতি কোড, ভবিষ্যতে Axiom এ রূপান্তর সম্ভব)
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
@@ -203,4 +200,4 @@ elif option == "DexScreener Address দিয়ে":
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-            
+                    
