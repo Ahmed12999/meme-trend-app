@@ -20,7 +20,7 @@ from ai_logic import (
     calculate_sma_crossover, macd_histogram_signal
 )
 
-# ✅ রিফ্রেশ
+# ✅ রিফ্রেশ প্রতি ৬০ সেকেন্ডে
 count = st_autorefresh(interval=60000, limit=None, key="crypto_refresh")
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
@@ -94,8 +94,6 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     sma_signal = calculate_sma_crossover(sma_short, sma_long)
 
     macd_trend_signal = macd_histogram_signal(macd, signal)
-
-    # নতুন সিগন্যাল
     _, rsi_div = detect_rsi_divergence(price_series, calculate_rsi(price_series))
     macd_quant, _ = macd_histogram_strength(macd, signal)
 
@@ -138,7 +136,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
 # ✅ CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
-    st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন", value=st.session_state.input_query)
+    st.text_input("🔎 টোকেনের নাম লিখুন", key="input_query")
+
     if st.session_state.input_query:
         try:
             search_api = f"https://api.coingecko.com/api/v3/search?query={st.session_state.input_query}"
@@ -149,8 +148,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                 st.warning("😓 টোকেন পাওয়া যায়নি")
             else:
                 options = {f"{c['name']} ({c['symbol'].upper()})": c['id'] for c in coins[:10]}
-                selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()), index=0 if st.session_state.selected_token == "" else list(options.keys()).index(st.session_state.selected_token))
-                st.session_state.selected_token = selected
+                selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()), key="selected_token")
                 token_id = options[selected]
 
                 cg_url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
@@ -200,4 +198,4 @@ elif option == "DexScreener Address দিয়ে":
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-                    
+                
