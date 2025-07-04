@@ -44,7 +44,7 @@ def detect_rsi_divergence(prices, rsi, lookback=14):
     if len(prices) < lookback + 2 or len(rsi) < lookback + 2:
         return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য।"
     
-    recent_prices = prices[-(lookback+2):]
+    recent_prices = pd.Series(prices[-(lookback+2):])
     recent_rsi = rsi[-(lookback+2):]
 
     price_lows = recent_prices[(recent_prices.shift(1) > recent_prices) & (recent_prices.shift(-1) > recent_prices)]
