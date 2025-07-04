@@ -42,6 +42,14 @@ option = st.radio("📌 কোন উৎস থেকে বিশ্লেষ�
     ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
 )
 
+# Strictness সেট করার UI
+strictness = st.radio(
+    "🤖 AI ডিসিশন এর কড়াকড়ি সেট করুন:",
+    ("low", "medium", "high"),
+    index=1,
+    help="Low: নরম, Medium: মাঝামাঝি, High: কড়া সিদ্ধান্ত"
+)
+
 ws_kline_data = {}
 ws_threads = {}
 
@@ -121,7 +129,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     candle_vol_ai = candlestick_volume_ai(df)
     vol_spike_msg = volume_spike_summary(df['volume_spike'].iloc[-1])
 
-    decision = ai_decision(rsi, macd, signal, price_change, volume)
+    # Pass strictness param to AI decision
+    decision = ai_decision(rsi, macd, signal, price_change, volume, strictness=strictness)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
     risk_msg = risk_signal(price, price)  # current price == entry price as example
 
@@ -232,4 +241,4 @@ elif option == "DexScreener Address দিয়ে":
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-    
+            
