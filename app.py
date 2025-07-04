@@ -108,7 +108,6 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     macd_quant, _ = macd_histogram_strength(macd, signal)
 
     # Prepare OHLCV df for candlestick and volume spike detection
-    # Here we simulate OHLCV for simplicity
     df = pd.DataFrame({
         'open': price_series * (1 + np.random.uniform(-0.01, 0.01, size=len(price_series))),
         'high': price_series * (1 + np.random.uniform(0, 0.02, size=len(price_series))),
@@ -124,7 +123,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
-    risk_msg = risk_signal(price, price)  # Here current price == entry price for example
+    risk_msg = risk_signal(price, price)  # current price == entry price as example
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
     st.markdown(f"""
@@ -194,9 +193,9 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                     symbol_raw = coin['symbol'].upper()
                     binance_symbol = symbol_raw + "USDT"
                     price = coin['market_data']['current_price']['usd']
-                    price_change = coin['market_data']['price_change_percentage_1h_in_currency']['usd']
+                    price_change = coin['market_data'].get('price_change_percentage_1h_in_currency', {}).get('usd', 0)
                     volume = coin['market_data']['total_volume']['usd']
-                    mcap = coin['market_data']['fully_diluted_valuation']['usd']
+                    mcap = coin['market_data'].get('fully_diluted_valuation', {}).get('usd', 'N/A')
 
                     if is_binance_symbol(binance_symbol):
                         st.success(f"Binance-listed coin: {binance_symbol}")
@@ -233,4 +232,4 @@ elif option == "DexScreener Address দিয়ে":
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
-                         
+    
