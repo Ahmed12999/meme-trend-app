@@ -32,7 +32,6 @@ def calculate_sma(prices, period=50):
     sma = df['close'].rolling(window=period).mean()
     return sma
 
-
 # RSI Divergence ডিটেকশন (সিম্পল ভার্সন)
 def detect_rsi_divergence(prices, rsi, lookback=14):
     if len(prices) < lookback + 2 or len(rsi) < lookback + 2:
@@ -41,7 +40,6 @@ def detect_rsi_divergence(prices, rsi, lookback=14):
     recent_prices = prices[-(lookback+2):]
     recent_rsi = rsi[-(lookback+2):]
 
-    # Bullish divergence: price low ↓, RSI low ↑
     price_lows = recent_prices[(recent_prices.shift(1) > recent_prices) & (recent_prices.shift(-1) > recent_prices)]
     rsi_lows = recent_rsi.loc[price_lows.index]
 
@@ -49,7 +47,6 @@ def detect_rsi_divergence(prices, rsi, lookback=14):
         if price_lows.iloc[-1] < price_lows.iloc[-2] and rsi_lows.iloc[-1] > rsi_lows.iloc[-2]:
             return True, "🟢 RSI Bullish Divergence: দাম বাড়ার সম্ভাবনা!"
 
-    # Bearish divergence: price high ↑, RSI high ↓
     price_highs = recent_prices[(recent_prices.shift(1) < recent_prices) & (recent_prices.shift(-1) < recent_prices)]
     rsi_highs = recent_rsi.loc[price_highs.index]
 
@@ -59,8 +56,7 @@ def detect_rsi_divergence(prices, rsi, lookback=14):
 
     return False, "⚪ কোন RSI Divergence পাওয়া যায়নি।"
 
-
-# MACD Histogram Quantification
+# MACD Histogram Strength
 def macd_histogram_strength(macd, signal):
     histogram = macd - signal
     if len(histogram) < 3:
@@ -80,4 +76,34 @@ def macd_histogram_strength(macd, signal):
         return "🟡 MACD Histogram নেতিবাচক কিন্তু দুর্বল প্রবণতা।", -1
     else:
         return "⚪ MACD Histogram স্থিতিশীল।", 0
-        
+
+# ✅ নতুন: ক্যান্ডেলস্টিক প্যাটার্ন ডিটেকশন
+def detect_candlestick_patterns(df):
+    patterns = []
+    for i in range(1, len(df)):
+        o, h, l, c = df.iloc[i][['open', 'high', 'low', 'close']]
+        prev_o, prev_c = df.iloc[i-1][['open', 'close']]
+
+        if prev_c < prev_o and c > o and c > prev_o and o < prev_c:
+            patterns.append("Bullish Engulfing")
+        elif prev_c > prev_o and c < o and c < prev_o and o > prev_c:
+            patterns.append("Bearish Engulfing")
+        elif abs(c - o) / (h - l + 1e-6) < 0.1:
+            patterns.append("Doji")
+        elif (h - l) > 3 * abs(o - c) and (c - l) / (h - l + 1e-6) > 0.6:
+            patterns.append("Hammer")
+        elif (h - l) > 3 * abs(o - c) and (h - max(o, c)) / (h - l + 1e-6) > 0.6:
+            patterns.append("Shooting Star")
+        else:
+            patterns.append(None)
+
+    patterns.insert(0, None)
+    df['pattern'] = patterns
+    return df
+
+# ✅ নতুন: ভলিউম স্পাইক ডিটেকশন
+def detect_volume_spike(df, window=20, threshold=2.0):
+    df['avg_volume'] = df['volume'].rolling(window=window).mean()
+    df['volume_spike'] = df['volume'] > threshold * df['avg_volume']
+    return df
+    
