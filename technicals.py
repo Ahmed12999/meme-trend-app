@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 import ta
 
+# ========================
+# Indicators
+# ========================
+
 def calculate_rsi(prices, period=14):
     df = pd.DataFrame({'close': prices})
     rsi = ta.momentum.RSIIndicator(close=df['close'], window=period).rsi()
@@ -32,6 +36,10 @@ def calculate_sma(prices, period=50):
     sma = df['close'].rolling(window=period).mean()
     return sma
 
+# ========================
+# RSI Divergence
+# ========================
+
 def detect_rsi_divergence(prices, rsi, lookback=14):
     if len(prices) < lookback + 2 or len(rsi) < lookback + 2:
         return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য।"
@@ -55,6 +63,10 @@ def detect_rsi_divergence(prices, rsi, lookback=14):
 
     return False, "⚪ কোন RSI Divergence পাওয়া যায়নি।"
 
+# ========================
+# MACD Histogram Strength
+# ========================
+
 def macd_histogram_strength(macd, signal):
     histogram = macd - signal
     if len(histogram) < 3:
@@ -74,6 +86,10 @@ def macd_histogram_strength(macd, signal):
         return "🟡 MACD Histogram নেতিবাচক কিন্তু দুর্বল প্রবণতা।", -1
     else:
         return "⚪ MACD Histogram স্থিতিশীল।", 0
+
+# ========================
+# Candlestick Pattern Detection
+# ========================
 
 def detect_candlestick_patterns(df):
     patterns = []
@@ -98,10 +114,18 @@ def detect_candlestick_patterns(df):
     df['pattern'] = patterns
     return df
 
+# ========================
+# Volume Spike Detection
+# ========================
+
 def detect_volume_spike(df, window=20, threshold=2.0):
     df['avg_volume'] = df['volume'].rolling(window=window).mean()
     df['volume_spike'] = df['volume'] > threshold * df['avg_volume']
     return df
+
+# ========================
+# Risk Management Signal
+# ========================
 
 def risk_management_signals(entry_price, current_price, stop_loss_pct=5, take_profit_pct=10):
     stop_loss_price = entry_price * (1 - stop_loss_pct / 100)
