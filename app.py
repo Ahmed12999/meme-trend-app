@@ -24,7 +24,7 @@ from ai_logic import (
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
-# ✅ Session state init
+# Session state init
 if "input_query" not in st.session_state:
     st.session_state.input_query = ""
 if "selected_token" not in st.session_state:
@@ -72,6 +72,7 @@ def is_binance_symbol(symbol):
         return False
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
+    # ইতিহাসের দাম ও ভলিউম সিরিজ তৈরি
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
         for i in range(30)
@@ -84,7 +85,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     macd_val = macd.iloc[-1]
     signal_val = signal.iloc[-1]
 
-    upper_band, _, lower_band = calculate_bollinger_bands(price_series)
+    upper_band, middle_band, lower_band = calculate_bollinger_bands(price_series)
     upper_band_val = upper_band.iloc[-1]
     lower_band_val = lower_band.iloc[-1]
 
@@ -100,11 +101,11 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
 
-    # Prepare full OHLCV DataFrame for candlestick and volume spike analysis
+    # OHLCV DataFrame Approximation (randomize vol)
     df = pd.DataFrame({
         'open': price_series.shift(1).fillna(method='bfill'),
-        'high': price_series * (1 + random.uniform(0.01, 0.03)),
-        'low': price_series * (1 - random.uniform(0.01, 0.03)),
+        'high': price_series * (1 + np.random.uniform(0.01, 0.03, len(price_series))),
+        'low': price_series * (1 - np.random.uniform(0.01, 0.03, len(price_series))),
         'close': price_series,
         'volume': np.random.uniform(volume * 0.8, volume * 1.2, len(price_series))
     })
@@ -114,6 +115,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     pattern_signal = candlestick_volume_ai(df)
 
+    # আউটপুট
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
     st.markdown(f"""
 - 🌐 **Chain:** {chain or 'N/A'}
@@ -147,11 +149,13 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 ### 📢 ব্রেকআউট সিগন্যাল:
 {bb_signal}
 
-### 🕯️ ক্যান্ডেলস্টিক বিশ্লেষণ:
+---
+
+### 🕯️ ক্যান্ডেলস্টিক + ভলিউম বিশ্লেষণ:
 {pattern_signal}
 """)
 
-# ✅ CoinGecko অপশন
+# CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)", value=st.session_state.input_query)
     if st.session_state.input_query:
@@ -176,9 +180,9 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                     symbol_raw = coin['symbol'].upper()
                     binance_symbol = symbol_raw + "USDT"
                     price = coin['market_data']['current_price']['usd']
-                    price_change = coin['market_data']['price_change_percentage_1h_in_currency']['usd']
+                    price_change = coin['market_data'].get('price_change_percentage_1h_in_currency', {}).get('usd', 0)
                     volume = coin['market_data']['total_volume']['usd']
-                    mcap = coin['market_data']['fully_diluted_valuation']['usd']
+                    mcap = coin['market_data'].get('fully_diluted_valuation', {}).get('usd', 'N/A')
 
                     if is_binance_symbol(binance_symbol):
                         st.success(f"Binance-listed coin: {binance_symbol}")
@@ -193,7 +197,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# ✅ DexScreener অপশন (ভবিষ্যতে Axiom যুক্ত হবে)
+# DexScreener অপশন
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
