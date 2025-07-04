@@ -32,7 +32,7 @@ def calculate_sma(prices, period=50):
     sma = df['close'].rolling(window=period).mean()
     return sma
 
-# RSI Divergence ডিটেকশন (সিম্পল ভার্সন)
+# RSI Divergence (Simple version)
 def detect_rsi_divergence(prices, rsi, lookback=14):
     if len(prices) < lookback + 2 or len(rsi) < lookback + 2:
         return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য।"
@@ -77,7 +77,7 @@ def macd_histogram_strength(macd, signal):
     else:
         return "⚪ MACD Histogram স্থিতিশীল।", 0
 
-# ✅ নতুন: ক্যান্ডেলস্টিক প্যাটার্ন ডিটেকশন
+# Candlestick Pattern Detection
 def detect_candlestick_patterns(df):
     patterns = []
     for i in range(1, len(df)):
@@ -101,7 +101,7 @@ def detect_candlestick_patterns(df):
     df['pattern'] = patterns
     return df
 
-# ✅ নতুন: ভলিউম স্পাইক ডিটেকশন
+# Volume Spike Detection
 def detect_volume_spike(df, window=20, threshold=2.0):
     df['avg_volume'] = df['volume'].rolling(window=window).mean()
     df['volume_spike'] = df['volume'] > threshold * df['avg_volume']
