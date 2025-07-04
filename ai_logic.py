@@ -37,6 +37,7 @@ def ai_decision(rsi, macd, signal, price_change, volume):
 
     return decision
 
+
 def bollinger_breakout_signal(price, upper_band, lower_band):
     if price > upper_band:
         return "🚨 দাম Upper Bollinger Band এর উপরে — Breakout হতে পারে!"
@@ -44,6 +45,7 @@ def bollinger_breakout_signal(price, upper_band, lower_band):
         return "🔻 দাম Lower Bollinger Band এর নিচে — Sell Pressure!"
     else:
         return "📊 দাম Bollinger Band এর ভেতরে — স্বাভাবিক গতিবিধি।"
+
 
 def calculate_sma_crossover(short_sma, long_sma):
     if len(short_sma) < 2 or len(long_sma) < 2:
@@ -61,6 +63,7 @@ def calculate_sma_crossover(short_sma, long_sma):
     else:
         return "⚪ SMA সিগন্যাল নেই"
 
+
 def macd_histogram_signal(macd, signal):
     histogram = macd - signal
     if histogram.iloc[-1] > 0 and histogram.iloc[-2] <= 0:
@@ -69,6 +72,7 @@ def macd_histogram_signal(macd, signal):
         return "🔴 MACD হিষ্টোগ্রাম নেতিবাচক প্রবণতা শুরু করেছে।"
     else:
         return "⚪ MACD হিষ্টোগ্রাম স্থিতিশীল।"
+
 
 def candlestick_volume_ai(df):
     last_pattern = df['pattern'].dropna().iloc[-1] if df['pattern'].dropna().any() else None
@@ -113,8 +117,10 @@ def candlestick_volume_ai(df):
     full_message = "\n".join(messages) + f"\n\n📊 Confidence Score: {confidence}\n\n**স্ট্র্যাটেজি:** {strategy}"
     return full_message
 
+
 def volume_spike_summary(spike):
     return "📈 হুইল ট্রেডার ঢুকছে, সতর্কভাবে Buy এনট্রি বিবেচনা করা যেতে পারে।" if spike else "📉 ভলিউম স্বাভাবিক, হুইল সক্রিয় নয়।"
+
 
 def risk_signal(entry_price, current_price, sl_pct=5, tp_pct=10):
     sl = entry_price * (1 - sl_pct / 100)
@@ -127,4 +133,4 @@ def risk_signal(entry_price, current_price, sl_pct=5, tp_pct=10):
     else:
         msg += "\n⏳ মার্কেট এখনও লক্ষ্যমাত্রায় পৌঁছায়নি।"
     return msg
-        
+    
