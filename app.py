@@ -11,12 +11,14 @@ import websockets
 from technicals import (
     calculate_rsi, calculate_ema, calculate_macd,
     calculate_bollinger_bands, calculate_sma,
-    detect_rsi_divergence, macd_histogram_strength
+    detect_rsi_divergence, macd_histogram_strength,
+    detect_candlestick_patterns, detect_volume_spike
 )
 
 from ai_logic import (
     ai_decision, bollinger_breakout_signal,
-    calculate_sma_crossover, macd_histogram_signal
+    calculate_sma_crossover, macd_histogram_signal,
+    candlestick_volume_ai
 )
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
@@ -98,6 +100,20 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     decision = ai_decision(rsi, macd, signal, price_change, volume)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
 
+    # Prepare full OHLCV DataFrame for candlestick and volume spike analysis
+    df = pd.DataFrame({
+        'open': price_series.shift(1).fillna(method='bfill'),
+        'high': price_series * (1 + random.uniform(0.01, 0.03)),
+        'low': price_series * (1 - random.uniform(0.01, 0.03)),
+        'close': price_series,
+        'volume': np.random.uniform(volume * 0.8, volume * 1.2, len(price_series))
+    })
+
+    df = detect_candlestick_patterns(df)
+    df = detect_volume_spike(df)
+
+    pattern_signal = candlestick_volume_ai(df)
+
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
     st.markdown(f"""
 - 🌐 **Chain:** {chain or 'N/A'}
@@ -130,6 +146,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
 ### 📢 ব্রেকআউট সিগন্যাল:
 {bb_signal}
+
+### 🕯️ ক্যান্ডেলস্টিক বিশ্লেষণ:
+{pattern_signal}
 """)
 
 # ✅ CoinGecko অপশন
