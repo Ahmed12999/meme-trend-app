@@ -1,23 +1,32 @@
-def ai_decision(rsi, macd, signal, price_change, volume):
+def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
     decision = ""
 
-    if rsi < 30:
+    # RSI ডিসিশন - strictness অনুযায়ী থ্রেশহোল্ড পরিবর্তন
+    rsi_oversold = 30 if strictness == "low" else 35 if strictness == "medium" else 40
+    rsi_overbought = 70 if strictness == "low" else 65 if strictness == "medium" else 60
+
+    if rsi < rsi_oversold:
         decision += "📉 RSI কম (Oversold)। দাম বাড়ার সম্ভাবনা আছে।\n"
-    elif rsi > 70:
+    elif rsi > rsi_overbought:
         decision += "📈 RSI বেশি (Overbought)। দাম কমতে পারে।\n"
     else:
         decision += "📊 RSI মাঝামাঝি, মার্কেট সাইডওয়ে থাকতে পারে।\n"
 
-    if macd.iloc[-1] > signal.iloc[-1]:
+    macd_val = macd.iloc[-1]
+    signal_val = signal.iloc[-1]
+
+    if macd_val > signal_val:
         decision += "✅ MACD bullish crossover (Buy signal)।\n"
-    elif macd.iloc[-1] < signal.iloc[-1]:
+    elif macd_val < signal_val:
         decision += "❌ MACD bearish crossover (Sell signal)।\n"
     else:
         decision += "⏸️ MACD নিরপেক্ষ।\n"
 
-    if price_change > 1:
+    price_change_threshold = 0.5 if strictness == "low" else 1 if strictness == "medium" else 1.5
+
+    if price_change > price_change_threshold:
         decision += f"🚀 1h প্রাইস +{price_change:.2f}% — শক্তিশালী মুভমেন্ট!\n"
-    elif price_change < -1:
+    elif price_change < -price_change_threshold:
         decision += f"⚠️ 1h প্রাইস {price_change:.2f}% — দুর্বলতা।\n"
     else:
         decision += f"⏳ 1h প্রাইস পরিবর্তন খুব কম।\n"
@@ -28,12 +37,22 @@ def ai_decision(rsi, macd, signal, price_change, volume):
     else:
         decision += "📉 ভলিউম স্বাভাবিক।\n"
 
-    if rsi < 35 and macd.iloc[-1] > signal.iloc[-1] and volume > avg_volume:
-        decision += "\n🟢 **AI পরামর্শ: এখন দাম বাড়তে পারে, ট্রেড নিন।**"
-    elif rsi > 70 and macd.iloc[-1] < signal.iloc[-1]:
-        decision += "\n🔴 **AI পরামর্শ: দাম অনেক বেড়েছে, এখন সেল বা অপেক্ষা করুন।**"
-    else:
-        decision += "\n🟡 **AI পরামর্শ: মার্কেট অনিশ্চিত, কিছুক্ষণ অপেক্ষা করুন।**"
+    if strictness == "high":
+        if rsi < rsi_oversold and macd_val > signal_val and volume > avg_volume * 1.5:
+            decision += "\n🟢 **AI পরামর্শ: এখন দাম বাড়তে পারে, ট্রেড নিন।**"
+        elif rsi > rsi_overbought and macd_val < signal_val:
+            decision += "\n🔴 **AI পরামর্শ: দাম অনেক বেড়েছে, এখন সেল বা অপেক্ষা করুন।**"
+        else:
+            decision += "\n🟡 **AI পরামর্শ: মার্কেট অনিশ্চিত, অপেক্ষা করুন।**"
+    elif strictness == "medium":
+        if rsi < rsi_oversold and macd_val > signal_val and volume > avg_volume:
+            decision += "\n🟢 **AI পরামর্শ: এখন দাম বাড়তে পারে, ট্রেড নিন।**"
+        elif rsi > rsi_overbought and macd_val < signal_val:
+            decision += "\n🔴 **AI পরামর্শ: দাম অনেক বেড়েছে, এখন সেল বা অপেক্ষা করুন।**"
+        else:
+            decision += "\n🟡 **AI পরামর্শ: মার্কেট অনিশ্চিত, কিছুক্ষণ অপেক্ষা করুন।**"
+    else:  # low strictness
+        decision += "\n🟢 **AI পরামর্শ: হালকা সংকেত আছে, সাবধানতার সাথে ট্রেড করুন।**"
 
     return decision
 
@@ -133,4 +152,4 @@ def risk_signal(entry_price, current_price, sl_pct=5, tp_pct=10):
     else:
         msg += "\n⏳ মার্কেট এখনও লক্ষ্যমাত্রায় পৌঁছায়নি।"
     return msg
-    
+        
