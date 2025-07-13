@@ -32,7 +32,7 @@ from ai_logic import (
 )
 
 from api_clients import (
-    fetch_new_launchpad_coins  # ✅ এখন এখানে থেকে import হচ্ছে
+    fetch_new_launchpad_coins
 )
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
@@ -97,6 +97,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
         for i in range(30)
     ]
     price_series = pd.Series(history)
+    current_price = price_series.iloc[-1]
 
     rsi = calculate_rsi(price_series).iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
@@ -132,7 +133,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     decision = ai_decision(rsi, macd, signal, price_change, volume, strictness=strictness)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
-    risk_msg = risk_signal(price, price)
+    risk_msg = risk_signal(price, current_price)
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
     st.markdown(f"""
@@ -177,7 +178,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {risk_msg}
 """)
 
-# --- নতুন Launchpad Coins সাইডবারে দেখান --- #
+# --- নতুন Launchpad Meme Coin ফিচার --- #
 def show_new_launchpad_coins():
     st.sidebar.header("🚀 নতুন Launchpad Meme Coins")
     coins = fetch_new_launchpad_coins()
@@ -202,11 +203,11 @@ def show_new_launchpad_coins():
         analysis = analyze_new_coin(coin_data)
         st.sidebar.markdown(f"### {name}")
         st.sidebar.markdown(analysis)
-        st.sidebar.markdown("---")
+        st.sidebar.divider()
 
 show_new_launchpad_coins()
 
-# ✅ CoinGecko অপশন
+# CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)", value=st.session_state.input_query)
     if st.session_state.input_query:
@@ -248,7 +249,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# ✅ DexScreener অপশন
+# DexScreener অপশন
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
