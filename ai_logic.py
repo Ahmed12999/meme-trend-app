@@ -188,4 +188,4 @@ def analyze_new_coin(coin_data):
         verdict = "❌ দুর্বল coin — এড়িয়ে চলুন"
 
     return f"{verdict}\n\n{coin_data['name']} বিশ্লেষণ:\n" + "\n".join(notes)
-  
+    
