@@ -27,7 +27,8 @@ from ai_logic import (
     macd_histogram_signal,
     candlestick_volume_ai,
     volume_spike_summary,
-    risk_signal
+    risk_signal,
+    analyze_new_coin  # নতুন ফিচারের জন্য ফাংশন
 )
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
@@ -42,7 +43,6 @@ option = st.radio("📌 কোন উৎস থেকে বিশ্লেষ�
     ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
 )
 
-# Strictness সেট করার UI
 strictness = st.radio(
     "🤖 AI ডিসিশন এর কড়াকড়ি সেট করুন:",
     ("low", "medium", "high"),
@@ -82,20 +82,18 @@ def start_ws_thread(symbol):
 def is_binance_symbol(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
-        r = requests.get(url)
+        r = requests.get(url, timeout=10)
         return r.status_code == 200
     except Exception:
         return False
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
-    # Generate price history simulation for indicator calculation
     history = [
         price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
         for i in range(30)
     ]
     price_series = pd.Series(history)
 
-    # Calculate technical indicators
     rsi = calculate_rsi(price_series).iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
     macd, signal = calculate_macd(price_series)
@@ -115,7 +113,6 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     _, rsi_div = detect_rsi_divergence(price_series, calculate_rsi(price_series))
     macd_quant, _ = macd_histogram_strength(macd, signal)
 
-    # Prepare OHLCV df for candlestick and volume spike detection
     df = pd.DataFrame({
         'open': price_series * (1 + np.random.uniform(-0.01, 0.01, size=len(price_series))),
         'high': price_series * (1 + np.random.uniform(0, 0.02, size=len(price_series))),
@@ -129,10 +126,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     candle_vol_ai = candlestick_volume_ai(df)
     vol_spike_msg = volume_spike_summary(df['volume_spike'].iloc[-1])
 
-    # Pass strictness param to AI decision
     decision = ai_decision(rsi, macd, signal, price_change, volume, strictness=strictness)
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
-    risk_msg = risk_signal(price, price)  # current price == entry price as example
+    risk_msg = risk_signal(price, price)
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
     st.markdown(f"""
@@ -177,13 +173,55 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {risk_msg}
 """)
 
+# --- নতুন ফিচার: Pump.fun থেকে নতুন মেমে কয়েন আনা ও বিশ্লেষণ --- #
+def fetch_new_launchpad_coins():
+    try:
+        # Pump.fun API URL (আপডেট প্রয়োজনে ঠিক করুন)
+        url = "https://pump.fun/api/launchpad/newly-launched"
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        coins = data.get("coins", [])
+        return coins
+    except Exception as e:
+        st.error(f"নতুন Launchpad কয়েন আনতে সমস্যা হয়েছে: {e}")
+        return []
+
+def show_new_launchpad_coins():
+    st.sidebar.header("🚀 নতুন Launchpad Meme Coins")
+    coins = fetch_new_launchpad_coins()
+    if not coins:
+        st.sidebar.info("নতুন কয়েন পাওয়া যায়নি বা লোড হচ্ছে...")
+        return
+
+    for coin in coins[:10]:  # সর্বোচ্চ ১০টি কয়েন দেখানো হবে
+        name = coin.get('name', 'Unknown')
+        price = coin.get('price', 0)
+        liquidity = coin.get('liquidity', 0)
+        volume_24h = coin.get('volume_24h', 0)
+        market_cap = coin.get('market_cap', 0)
+
+        coin_data = {
+            'name': name,
+            'price': price,
+            'liquidity': liquidity,
+            'volume_24h': volume_24h,
+            'market_cap': market_cap
+        }
+        analysis = analyze_new_coin(coin_data)
+        st.sidebar.markdown(f"### {name}")
+        st.sidebar.markdown(analysis)
+        st.sidebar.markdown("---")
+
+# সাইডবারে নতুন Launchpad কয়েন দেখান
+show_new_launchpad_coins()
+
 # CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)", value=st.session_state.input_query)
     if st.session_state.input_query:
         try:
             search_api = f"https://api.coingecko.com/api/v3/search?query={st.session_state.input_query}"
-            res = requests.get(search_api)
+            res = requests.get(search_api, timeout=10)
             data = res.json()
             coins = data.get('coins', [])
             if not coins:
@@ -195,7 +233,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
                 token_id = options[selected]
 
                 cg_url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
-                response = requests.get(cg_url)
+                response = requests.get(cg_url, timeout=10)
                 if response.status_code == 200:
                     coin = response.json()
                     name = coin['name']
@@ -225,7 +263,7 @@ elif option == "DexScreener Address দিয়ে":
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
         try:
             url = f"https://api.dexscreener.com/latest/dex/search/?q={token_address}"
-            res = requests.get(url)
+            res = requests.get(url, timeout=10)
             data = res.json()
             if not data or 'pairs' not in data or len(data['pairs']) == 0:
                 st.error("⚠️ এই অ্যাড্রেসের জন্য কোনো টোকেন ডেটা পাওয়া যায়নি।")
