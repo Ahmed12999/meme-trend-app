@@ -28,7 +28,11 @@ from ai_logic import (
     candlestick_volume_ai,
     volume_spike_summary,
     risk_signal,
-    analyze_new_coin  # নতুন ফিচারের জন্য ফাংশন
+    analyze_new_coin
+)
+
+from api_clients import (
+    fetch_new_launchpad_coins  # ✅ এখন এখানে থেকে import হচ্ছে
 )
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
@@ -173,19 +177,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {risk_msg}
 """)
 
-# --- নতুন ফিচার: Pump.fun থেকে নতুন মেমে কয়েন আনা ও বিশ্লেষণ --- #
-def fetch_new_launchpad_coins():
-    try:
-        # Pump.fun API URL (আপডেট প্রয়োজনে ঠিক করুন)
-        url = "https://pump.fun/api/launchpad/newly-launched"
-        res = requests.get(url, timeout=10)
-        data = res.json()
-        coins = data.get("coins", [])
-        return coins
-    except Exception as e:
-        st.error(f"নতুন Launchpad কয়েন আনতে সমস্যা হয়েছে: {e}")
-        return []
-
+# --- নতুন Launchpad Coins সাইডবারে দেখান --- #
 def show_new_launchpad_coins():
     st.sidebar.header("🚀 নতুন Launchpad Meme Coins")
     coins = fetch_new_launchpad_coins()
@@ -193,7 +185,7 @@ def show_new_launchpad_coins():
         st.sidebar.info("নতুন কয়েন পাওয়া যায়নি বা লোড হচ্ছে...")
         return
 
-    for coin in coins[:10]:  # সর্বোচ্চ ১০টি কয়েন দেখানো হবে
+    for coin in coins[:10]:
         name = coin.get('name', 'Unknown')
         price = coin.get('price', 0)
         liquidity = coin.get('liquidity', 0)
@@ -212,10 +204,9 @@ def show_new_launchpad_coins():
         st.sidebar.markdown(analysis)
         st.sidebar.markdown("---")
 
-# সাইডবারে নতুন Launchpad কয়েন দেখান
 show_new_launchpad_coins()
 
-# CoinGecko অপশন
+# ✅ CoinGecko অপশন
 if option == "CoinGecko থেকে টোকেন খুঁজুন":
     st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)", value=st.session_state.input_query)
     if st.session_state.input_query:
@@ -257,7 +248,7 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# DexScreener অপশন
+# ✅ DexScreener অপশন
 elif option == "DexScreener Address দিয়ে":
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
