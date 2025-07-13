@@ -43,17 +43,6 @@ if "input_query" not in st.session_state:
 if "selected_token" not in st.session_state:
     st.session_state.selected_token = ""
 
-option = st.radio("📌 কোন উৎস থেকে বিশ্লেষণ করবেন?",
-    ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে")
-)
-
-strictness = st.radio(
-    "🤖 AI ডিসিশন এর কড়াকড়ি সেট করুন:",
-    ("low", "medium", "high"),
-    index=1,
-    help="Low: নরম, Medium: মাঝামাঝি, High: কড়া সিদ্ধান্ত"
-)
-
 ws_kline_data = {}
 ws_threads = {}
 
@@ -80,8 +69,9 @@ def start_ws_thread(symbol):
     if symbol in ws_threads:
         return
     loop = asyncio.new_event_loop()
-    ws_threads[symbol] = threading.Thread(target=loop.run_until_complete, args=(binance_ws_listener(symbol),), daemon=True)
-    ws_threads[symbol].start()
+    t = threading.Thread(target=loop.run_until_complete, args=(binance_ws_listener(symbol),), daemon=True)
+    ws_threads[symbol] = t
+    t.start()
 
 def is_binance_symbol(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
@@ -178,37 +168,19 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {risk_msg}
 """)
 
-# --- নতুন Launchpad Meme Coin ফিচার --- #
-def show_new_launchpad_coins():
-    st.sidebar.header("🚀 নতুন Launchpad Meme Coins")
-    coins = fetch_new_launchpad_coins()
-    if not coins:
-        st.sidebar.info("নতুন কয়েন পাওয়া যায়নি বা লোড হচ্ছে...")
-        return
+# Strictness Radio (kept outside tabs so it affects all)
+strictness = st.radio(
+    "🤖 AI ডিসিশন এর কড়াকড়ি সেট করুন:",
+    ("low", "medium", "high"),
+    index=1,
+    help="Low: নরম, Medium: মাঝামাঝি, High: কড়া সিদ্ধান্ত"
+)
 
-    for coin in coins[:10]:
-        name = coin.get('name', 'Unknown')
-        price = coin.get('price', 0)
-        liquidity = coin.get('liquidity', 0)
-        volume_24h = coin.get('volume_24h', 0)
-        market_cap = coin.get('market_cap', 0)
+# Tabs
+tab1, tab2, tab3 = st.tabs(["টোকেন বিশ্লেষণ", "DexScreener Address", "নতুন Launchpad কয়েন"])
 
-        coin_data = {
-            'name': name,
-            'price': price,
-            'liquidity': liquidity,
-            'volume_24h': volume_24h,
-            'market_cap': market_cap
-        }
-        analysis = analyze_new_coin(coin_data)
-        st.sidebar.markdown(f"### {name}")
-        st.sidebar.markdown(analysis)
-        st.sidebar.divider()
-
-show_new_launchpad_coins()
-
-# CoinGecko অপশন
-if option == "CoinGecko থেকে টোকেন খুঁজুন":
+with tab1:
+    st.header("🔎 CoinGecko থেকে টোকেন বিশ্লেষণ")
     st.session_state.input_query = st.text_input("🔎 টোকেনের নাম লিখুন (যেমন: pepe, bonk, sol)", value=st.session_state.input_query)
     if st.session_state.input_query:
         try:
@@ -249,8 +221,8 @@ if option == "CoinGecko থেকে টোকেন খুঁজুন":
         except Exception as e:
             st.error(f"❌ সমস্যা হয়েছে: {e}")
 
-# DexScreener অপশন
-elif option == "DexScreener Address দিয়ে":
+with tab2:
+    st.header("🔗 DexScreener দিয়ে টোকেন বিশ্লেষণ")
     token_address = st.text_input("🔗 যে কোনো চেইনের টোকেন অ্যাড্রেস দিন")
     if st.button("📊 বিশ্লেষণ করুন") and token_address:
         try:
@@ -271,4 +243,29 @@ elif option == "DexScreener Address দিয়ে":
                 analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
         except Exception as e:
             st.error(f"❌ ডেটা আনতে সমস্যা হয়েছে: {e}")
+
+with tab3:
+    st.header("🚀 Pump.fun থেকে নতুন Launchpad Meme Coins")
+    coins = fetch_new_launchpad_coins()
+    if not coins:
+        st.info("নতুন কয়েন পাওয়া যায়নি বা লোড হচ্ছে...")
+    else:
+        for coin in coins[:10]:
+            name = coin.get('name', 'Unknown')
+            price = coin.get('price', 0)
+            liquidity = coin.get('liquidity', 0)
+            volume_24h = coin.get('volume_24h', 0)
+            market_cap = coin.get('market_cap', 0)
+
+            coin_data = {
+                'name': name,
+                'price': price,
+                'liquidity': liquidity,
+                'volume_24h': volume_24h,
+                'market_cap': market_cap
+            }
+            analysis = analyze_new_coin(coin_data)
+            st.markdown(f"### {name}")
+            st.markdown(analysis)
+            st.divider()
             
