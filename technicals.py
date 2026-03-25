@@ -46,7 +46,7 @@ def detect_rsi_divergence(prices, rsi, lookback=14):
     prices_clean = prices.iloc[-len(rsi_clean):].reset_index(drop=True)
 
     if len(rsi_clean) < lookback + 2:
-        return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য。"
+        return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য।"
 
     recent_prices = prices_clean[-(lookback+2):]
     recent_rsi = rsi_clean[-(lookback+2):]
@@ -141,3 +141,50 @@ def risk_management_signals(entry_price, current_price, stop_loss_pct=5, take_pr
         return "🎯 Take Profit লক্ষ্যে পৌঁছেছে, লাভ নাও।"
     else:
         return "📈 মার্কেট চলমান, নজর রাখো।"
+
+# ========================
+# Support & Resistance
+# ========================
+
+def find_support_resistance(prices, window=5, tolerance=0.02):
+    """
+    Find support and resistance levels from price series.
+    window: number of bars on each side to consider a pivot.
+    tolerance: percentage to merge nearby levels.
+    Returns two lists: supports, resistances.
+    """
+    supports = []
+    resistances = []
+    
+    # Convert to list if Series
+    if hasattr(prices, 'iloc'):
+        prices = prices.tolist()
+    
+    # Find local minima and maxima
+    for i in range(window, len(prices) - window):
+        # Local minimum (support)
+        if all(prices[i] <= prices[i - j] for j in range(1, window+1)) and \
+           all(prices[i] <= prices[i + j] for j in range(1, window+1)):
+            supports.append(prices[i])
+        # Local maximum (resistance)
+        if all(prices[i] >= prices[i - j] for j in range(1, window+1)) and \
+           all(prices[i] >= prices[i + j] for j in range(1, window+1)):
+            resistances.append(prices[i])
+    
+    # Merge close levels
+    def merge_levels(levels, tol):
+        if not levels:
+            return []
+        levels.sort()
+        merged = [levels[0]]
+        for lvl in levels[1:]:
+            if lvl / merged[-1] - 1 <= tol:
+                merged[-1] = (merged[-1] + lvl) / 2  # average
+            else:
+                merged.append(lvl)
+        return merged
+    
+    supports = merge_levels(supports, tolerance)
+    resistances = merge_levels(resistances, tolerance)
+    
+    return supports, resistances
