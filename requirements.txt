@@ -3,5 +3,5 @@ pandas
 requests
 numpy
 ccxt
-axiomtradeapi
 ta
+websockets
