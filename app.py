@@ -198,3 +198,45 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 ### ⚠️ রিস্ক ম্যানেজমেন্ট:
 {risk_msg}
 """)
+# --------- Tabs ---------
+tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens"])
+
+# 📊 বিশ্লেষণ Tab
+with tabs[0]:
+    option = st.radio("📌 বিশ্লেষণের উৎস:", ("CoinGecko থেকে টোকেন খুঁজুন", "DexScreener Address দিয়ে"))
+    strictness = st.radio("🤖 AI ডিসিশন এর কড়াকড়ি:", ("low", "medium", "high"), index=1)
+    st.session_state.strictness = strictness
+
+    if option == "CoinGecko থেকে টোকেন খুঁজুন":
+        st.session_state.input_query = st.text_input("🔍 টোকেন নাম:", value=st.session_state.input_query)
+
+        if st.session_state.input_query:
+            try:
+                url = f"https://api.coingecko.com/api/v3/search?query={st.session_state.input_query}"
+                res = requests.get(url, timeout=10)
+                coins = res.json().get('coins', [])
+
+                if not coins:
+                    st.warning("😓 টোকেন পাওয়া যায়নি")
+                else:
+                    options = {f"{c['name']} ({c['symbol'].upper()})": c['id'] for c in coins[:10]}
+                    selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()))
+                    token_id = options[selected]
+
+                    response = requests.get(
+                        f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&market_data=true",
+                        timeout=10
+                    )
+                    coin = response.json()
+
+                    name = coin['name']
+                    symbol = coin['symbol'].upper()
+                    price = coin['market_data']['current_price']['usd']
+                    price_change = coin['market_data'].get('price_change_percentage_1h_in_currency', {}).get('usd', 0)
+                    volume = coin['market_data']['total_volume']['usd']
+                    mcap = coin['market_data'].get('fully_diluted_valuation', {}).get('usd', 'N/A')
+
+                    analyze_coin(name, symbol, price, price_change, volume, "CoinGecko", mcap, token_id)
+
+            except Exception as e:
+                st.error(f"❌ সমস্যা: {e}")
