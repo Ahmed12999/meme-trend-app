@@ -37,6 +37,9 @@ from technicals import (
     find_support_resistance
 )
 
+# Import honeypot checker
+from honeypot_checker.checker import check_honeypot, display_honeypot_result
+
 # ----------------------------------------------------------------------
 # Trending tokens (fixed)
 # ----------------------------------------------------------------------
@@ -358,7 +361,7 @@ if "input_query" not in st.session_state:
 if "selected_token" not in st.session_state:
     st.session_state.selected_token = ""
 
-tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens"])
+tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens", "🛡️ Honeypot Checker"])
 
 with tabs[0]:
     option = st.radio("Source:", ("CoinGecko", "DexScreener", "Exchange (ccxt)"))
@@ -486,3 +489,21 @@ with tabs[1]:
                     st.write(f"✅ **{c['name']} ({c['symbol']})** – Rank #{c['market_cap_rank']} | 🔥 Score: {c['score']}")
             else:
                 st.info("No trending coins found.")
+
+with tabs[2]:
+    st.subheader("🔍 Token Honeypot Checker")
+    st.markdown("Check if a token is a scam/honeypot using honeypot.is API.")
+    
+    token_address = st.text_input("Token Address (Ethereum, BSC, Base)")
+    chain_options = {
+        "Auto-detect": None,
+        "Ethereum (1)": 1,
+        "BSC (56)": 56,
+        "Base (8453)": 8453
+    }
+    chain = st.selectbox("Chain (optional)", list(chain_options.keys()))
+    
+    if st.button("Check Token") and token_address:
+        with st.spinner("Analyzing contract..."):
+            result = check_honeypot(token_address, chain_options[chain])
+            display_honeypot_result(result)
