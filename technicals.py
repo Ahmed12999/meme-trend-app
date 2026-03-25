@@ -41,11 +41,15 @@ def calculate_sma(prices, period=50):
 # ========================
 
 def detect_rsi_divergence(prices, rsi, lookback=14):
-    if len(prices) < lookback + 2 or len(rsi) < lookback + 2:
-        return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য।"
-    
-    recent_prices = pd.Series(prices[-(lookback+2):])
-    recent_rsi = rsi[-(lookback+2):]
+    # Remove NaN from RSI
+    rsi_clean = rsi.dropna().reset_index(drop=True)
+    prices_clean = prices.iloc[-len(rsi_clean):].reset_index(drop=True)
+
+    if len(rsi_clean) < lookback + 2:
+        return False, "⚪ পর্যাপ্ত ডেটা নেই RSI Divergence এর জন্য。"
+
+    recent_prices = prices_clean[-(lookback+2):]
+    recent_rsi = rsi_clean[-(lookback+2):]
 
     price_lows = recent_prices[(recent_prices.shift(1) > recent_prices) & (recent_prices.shift(-1) > recent_prices)]
     rsi_lows = recent_rsi.loc[price_lows.index]
@@ -120,7 +124,7 @@ def detect_candlestick_patterns(df):
 
 def detect_volume_spike(df, window=20, threshold=2.0):
     df['avg_volume'] = df['volume'].rolling(window=window).mean()
-    df['volume_spike'] = df['volume'] > threshold * df['avg_volume']
+    df['volume_spike'] = (df['avg_volume'] > 0) & (df['volume'] > threshold * df['avg_volume'])
     return df
 
 # ========================
@@ -137,4 +141,3 @@ def risk_management_signals(entry_price, current_price, stop_loss_pct=5, take_pr
         return "🎯 Take Profit লক্ষ্যে পৌঁছেছে, লাভ নাও।"
     else:
         return "📈 মার্কেট চলমান, নজর রাখো।"
-        
