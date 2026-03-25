@@ -6,3 +6,4 @@ ta
 python-binance
 websockets
 streamlit-autorefresh
+ccxt
