@@ -20,78 +20,19 @@ from ai_logic import (
 # Import alerts functions
 from alerts import add_alert, check_alerts, display_alerts, clear_alerts, remove_alert
 
-# ----------------------------------------------------------------------
-# Technical indicators (kept here, could be moved to technicals.py)
-# ----------------------------------------------------------------------
-
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=period, min_periods=period).mean()
-    avg_loss = loss.rolling(window=period, min_periods=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50)
-
-def calculate_ema(series, period=20):
-    return series.ewm(span=period, adjust=False).mean()
-
-def calculate_macd(series, fast=12, slow=26, signal=9):
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line
-
-def calculate_bollinger_bands(series, window=20, num_std=2):
-    sma = series.rolling(window=window).mean()
-    std = series.rolling(window=window).std()
-    upper = sma + (std * num_std)
-    lower = sma - (std * num_std)
-    return upper, sma, lower
-
-def calculate_sma(series, period=20):
-    return series.rolling(window=period).mean()
-
-def macd_histogram_strength(macd, signal):
-    hist = macd - signal
-    avg = hist.abs().mean()
-    strength = min(hist.iloc[-1] / avg if avg != 0 else 0, 1)
-    return strength, hist.iloc[-1] > 0
-
-def detect_volume_spike(df, window=20, threshold=2.0):
-    df['volume_spike'] = df['volume'] > df['volume'].rolling(window=window).mean() * threshold
-    return df
-
-# ----------------------------------------------------------------------
-# Enhanced candlestick pattern detection (no external libs)
-# ----------------------------------------------------------------------
-
-def detect_candlestick_patterns(df):
-    df['pattern'] = None
-
-    body = abs(df['close'] - df['open'])
-    upper_shadow = df['high'] - df[['close', 'open']].max(axis=1)
-    lower_shadow = df[['close', 'open']].min(axis=1) - df['low']
-    doji_condition = (body <= (df['high'] - df['low']) * 0.1) & (body != 0)
-    df.loc[doji_condition, 'pattern'] = 'Doji'
-
-    hammer_condition = (lower_shadow > body * 2) & (upper_shadow < body * 0.5) & (df['close'] > df['open'])
-    df.loc[hammer_condition, 'pattern'] = 'Hammer'
-
-    shooting_condition = (upper_shadow > body * 2) & (lower_shadow < body * 0.5) & (df['close'] < df['open'])
-    df.loc[shooting_condition, 'pattern'] = 'Shooting Star'
-
-    if len(df) >= 2:
-        prev = df.shift(1)
-        bull_engulf = (prev['close'] < prev['open']) & (df['close'] > df['open']) & (df['close'] > prev['open']) & (df['open'] < prev['close'])
-        df.loc[bull_engulf, 'pattern'] = 'Bullish Engulfing'
-
-        bear_engulf = (prev['close'] > prev['open']) & (df['close'] < df['open']) & (df['close'] < prev['open']) & (df['open'] > prev['close'])
-        df.loc[bear_engulf, 'pattern'] = 'Bearish Engulfing'
-
-    return df
+# Import technical indicators from technicals.py
+from technicals import (
+    calculate_rsi,
+    calculate_ema,
+    calculate_macd,
+    calculate_bollinger_bands,
+    calculate_sma,
+    detect_rsi_divergence,
+    macd_histogram_strength,
+    detect_candlestick_patterns,
+    detect_volume_spike,
+    risk_management_signals
+)
 
 # ----------------------------------------------------------------------
 # Trending tokens (working DexScreener endpoint)
@@ -244,7 +185,7 @@ def get_price_series(coin_id=None, symbol=None, interval="1d", limit=100):
     return None
 
 # ----------------------------------------------------------------------
-# Main analysis function (uses the new AI functions)
+# Main analysis function (uses technicals and AI functions)
 # ----------------------------------------------------------------------
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None, coin_id=None, interval="1d", binance_symbol=None, exchange=None, exchange_symbol=None):
@@ -263,8 +204,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     current_price = price_series.iloc[-1]
 
-    # Indicators
-    rsi = calculate_rsi(price_series).iloc[-1]
+    # Indicators from technicals.py
+    rsi_series = calculate_rsi(price_series)
+    rsi = rsi_series.iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
     macd, signal = calculate_macd(price_series)
     macd_val = macd.iloc[-1]
@@ -282,16 +224,16 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
         'close': price_series,
         'volume': volume * np.random.uniform(0.8, 1.2, len(price_series))
     })
-    df = detect_candlestick_patterns(df)
-    df = detect_volume_spike(df)
+    df = detect_candlestick_patterns(df)      # from technicals.py
+    df = detect_volume_spike(df)              # from technicals.py
 
-    # Get the last pattern for alerts (if any)
     last_pattern = df['pattern'].dropna().iloc[-1] if df['pattern'].dropna().any() else None
 
-    # Use new AI functions
+    # AI decision (from ai_logic.py)
     decision = ai_decision(rsi, macd, signal, price_change, volume,
                            strictness=st.session_state.get('strictness', 'medium'))
 
+    # Additional signals
     bb_signal = bollinger_breakout_signal(current_price, upper_band.iloc[-1], lower_band.iloc[-1])
     sma_signal = calculate_sma_crossover(sma_short, sma_long)
     macd_hist_signal = macd_histogram_signal(macd, signal)
@@ -300,9 +242,10 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     candle_vol_analysis = candlestick_volume_ai(df, spike_flag)
     vol_spike_text = volume_spike_summary(spike_flag)
 
-    risk_msg = risk_signal(current_price, current_price)   # entry = current price
+    # Risk management (from technicals.py)
+    risk_msg = risk_management_signals(current_price, current_price)
 
-    # Check alerts for this coin
+    # Check alerts (from alerts.py)
     triggered_alerts = check_alerts(symbol, current_price, rsi=rsi, volume=volume, pattern=last_pattern)
     for alert_msg in triggered_alerts:
         st.warning(f"🔔 {alert_msg}")
