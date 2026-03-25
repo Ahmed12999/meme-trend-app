@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import random
 import ccxt
+import time
 
 # Import WebSocket client (this will start the thread)
 from websocket_client import start_websocket_thread
