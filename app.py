@@ -6,9 +6,6 @@ import random
 import ccxt
 import time
 
-# Import WebSocket client (this will start the thread)
-from websocket_client import start_websocket_thread
-
 # Import AI functions
 from ai_logic import (
     ai_decision,
@@ -306,9 +303,6 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
-# Start the WebSocket thread for real-time prices
-start_websocket_thread()
-
 # Sidebar for alerts
 with st.sidebar:
     st.header("🔔 Alerts")
@@ -330,7 +324,7 @@ if "input_query" not in st.session_state:
 if "selected_token" not in st.session_state:
     st.session_state.selected_token = ""
 
-tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens", "⚡ Real-Time Data (Coinbase)"])
+tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens", "⚡ Real-Time Data (CoinCap)"])
 
 with tabs[0]:
     option = st.radio("Source:", ("CoinGecko", "DexScreener", "Exchange (ccxt)"))
@@ -460,34 +454,29 @@ with tabs[1]:
                 st.info("No trending coins found.")
 
 with tabs[2]:
-    st.subheader("📡 Real-Time Prices (Coinbase Pro)")
-    st.markdown("Prices update every few seconds via WebSocket. Data is fresh and live.")
+    st.subheader("📡 Real-Time Prices (CoinCap REST API)")
+    st.markdown("Prices update every 2 seconds via free REST API. No WebSocket needed.")
+
+    def fetch_coincap_price(asset_id):
+        try:
+            url = f"https://api.coincap.io/v2/assets/{asset_id}"
+            response = requests.get(url, timeout=5)
+            data = response.json()
+            return float(data["data"]["priceUsd"])
+        except Exception as e:
+            return None
+
+    btc_price = fetch_coincap_price("bitcoin")
+    eth_price = fetch_coincap_price("ethereum")
+    sol_price = fetch_coincap_price("solana")
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(
-            label="BTC/USD",
-            value=f"${st.session_state.realtime_prices['BTC-USD']['price']:,.2f}",
-            delta=None,
-            help="Last trade price from Coinbase Pro"
-        )
-        st.caption(f"24h Volume: ${st.session_state.realtime_prices['BTC-USD']['volume']:,.0f}")
+        st.metric(label="BTC/USD", value=f"${btc_price:,.2f}" if btc_price else "N/A")
     with col2:
-        st.metric(
-            label="ETH/USD",
-            value=f"${st.session_state.realtime_prices['ETH-USD']['price']:,.2f}",
-            delta=None,
-            help="Last trade price from Coinbase Pro"
-        )
-        st.caption(f"24h Volume: ${st.session_state.realtime_prices['ETH-USD']['volume']:,.0f}")
+        st.metric(label="ETH/USD", value=f"${eth_price:,.2f}" if eth_price else "N/A")
     with col3:
-        st.metric(
-            label="SOL/USD",
-            value=f"${st.session_state.realtime_prices['SOL-USD']['price']:,.2f}",
-            delta=None,
-            help="Last trade price from Coinbase Pro"
-        )
-        st.caption(f"24h Volume: ${st.session_state.realtime_prices['SOL-USD']['volume']:,.0f}")
-    # Auto-refresh every 2 seconds
-    st.empty()
+        st.metric(label="SOL/USD", value=f"${sol_price:,.2f}" if sol_price else "N/A")
+
     time.sleep(2)
     st.rerun()
