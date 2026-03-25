@@ -146,6 +146,11 @@ EXCHANGE_MAP = {
     "KuCoin": ccxt.kucoin,
     "Kraken": ccxt.kraken,
     "Coinbase": ccxt.coinbase,
+    "MEXC": ccxt.mexc,
+    "Bitget": ccxt.bitget,
+    "OKX": ccxt.okx,
+    "Gate.io": ccxt.gate,
+    "HTX": ccxt.htx,
 }
 
 def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
