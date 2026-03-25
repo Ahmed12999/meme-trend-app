@@ -5,7 +5,7 @@ import numpy as np
 import random
 import ccxt
 
-# Import AI functions from the separate module
+# Import AI functions
 from ai_logic import (
     ai_decision,
     bollinger_breakout_signal,
@@ -16,6 +16,9 @@ from ai_logic import (
     risk_signal,
     analyze_new_coin
 )
+
+# Import alerts functions
+from alerts import add_alert, check_alerts, display_alerts, clear_alerts, remove_alert
 
 # ----------------------------------------------------------------------
 # Technical indicators (kept here, could be moved to technicals.py)
@@ -66,40 +69,25 @@ def detect_volume_spike(df, window=20, threshold=2.0):
 # ----------------------------------------------------------------------
 
 def detect_candlestick_patterns(df):
-    """
-    Detect basic candlestick patterns:
-    - Bullish Engulfing
-    - Bearish Engulfing
-    - Hammer
-    - Shooting Star
-    - Doji
-    Adds a column 'pattern' to df.
-    """
     df['pattern'] = None
 
-    # Doji
     body = abs(df['close'] - df['open'])
     upper_shadow = df['high'] - df[['close', 'open']].max(axis=1)
     lower_shadow = df[['close', 'open']].min(axis=1) - df['low']
     doji_condition = (body <= (df['high'] - df['low']) * 0.1) & (body != 0)
     df.loc[doji_condition, 'pattern'] = 'Doji'
 
-    # Hammer: small body, long lower shadow, little upper shadow
     hammer_condition = (lower_shadow > body * 2) & (upper_shadow < body * 0.5) & (df['close'] > df['open'])
     df.loc[hammer_condition, 'pattern'] = 'Hammer'
 
-    # Shooting Star: small body, long upper shadow, little lower shadow
     shooting_condition = (upper_shadow > body * 2) & (lower_shadow < body * 0.5) & (df['close'] < df['open'])
     df.loc[shooting_condition, 'pattern'] = 'Shooting Star'
 
-    # Engulfing patterns
     if len(df) >= 2:
         prev = df.shift(1)
-        # Bullish Engulfing: previous bearish, current bullish, body engulfs previous body
         bull_engulf = (prev['close'] < prev['open']) & (df['close'] > df['open']) & (df['close'] > prev['open']) & (df['open'] < prev['close'])
         df.loc[bull_engulf, 'pattern'] = 'Bullish Engulfing'
 
-        # Bearish Engulfing: previous bullish, current bearish, body engulfs previous body
         bear_engulf = (prev['close'] > prev['open']) & (df['close'] < df['open']) & (df['close'] < prev['open']) & (df['open'] > prev['close'])
         df.loc[bear_engulf, 'pattern'] = 'Bearish Engulfing'
 
@@ -110,7 +98,6 @@ def detect_candlestick_patterns(df):
 # ----------------------------------------------------------------------
 
 def fetch_dexscreener_trending():
-    """Fetch trending tokens from DexScreener."""
     try:
         url = "https://api.dexscreener.com/token/trending"
         response = requests.get(url, timeout=10)
@@ -123,7 +110,6 @@ def fetch_dexscreener_trending():
         return []
 
 def format_dexscreener_token(token):
-    """Convert DexScreener token data to a display dict."""
     return {
         'name': token.get('name', 'Unknown'),
         'symbol': token.get('symbol', ''),
@@ -138,7 +124,6 @@ def format_dexscreener_token(token):
     }
 
 def simple_ai_for_token(token):
-    """Simple AI score for a DexScreener token."""
     score = 0
     if token.get('volume', 0) > 1_000_000:
         score += 1
@@ -158,7 +143,6 @@ def simple_ai_for_token(token):
         return "⚪ HOLD"
 
 def fetch_coingecko_trending():
-    """Fallback: trending coins from CoinGecko."""
     try:
         url = "https://api.coingecko.com/api/v3/search/trending"
         response = requests.get(url, timeout=10)
@@ -298,8 +282,11 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
         'close': price_series,
         'volume': volume * np.random.uniform(0.8, 1.2, len(price_series))
     })
-    df = detect_candlestick_patterns(df)   # adds 'pattern' column
-    df = detect_volume_spike(df)           # adds 'volume_spike' column
+    df = detect_candlestick_patterns(df)
+    df = detect_volume_spike(df)
+
+    # Get the last pattern for alerts (if any)
+    last_pattern = df['pattern'].dropna().iloc[-1] if df['pattern'].dropna().any() else None
 
     # Use new AI functions
     decision = ai_decision(rsi, macd, signal, price_change, volume,
@@ -314,6 +301,11 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     vol_spike_text = volume_spike_summary(spike_flag)
 
     risk_msg = risk_signal(current_price, current_price)   # entry = current price
+
+    # Check alerts for this coin
+    triggered_alerts = check_alerts(symbol, current_price, rsi=rsi, volume=volume, pattern=last_pattern)
+    for alert_msg in triggered_alerts:
+        st.warning(f"🔔 {alert_msg}")
 
     source_info = f" ({exchange}/{exchange_symbol})" if exchange else ""
     st.success(f"✅ {name} ({symbol}) analysis complete (interval: {interval}{source_info})")
@@ -349,6 +341,22 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
+
+# Sidebar for alerts
+with st.sidebar:
+    st.header("🔔 Alerts")
+    display_alerts()
+    if st.button("Clear All Alerts"):
+        clear_alerts()
+        st.rerun()
+    st.divider()
+    st.header("Set Price Alert")
+    alert_symbol = st.text_input("Symbol (e.g., BTC, ETH)")
+    alert_target = st.number_input("Target Price ($)", min_value=0.0, step=0.01)
+    if st.button("Add Price Alert") and alert_symbol and alert_target > 0:
+        add_alert("price", alert_symbol.upper(), alert_target, 0, f"{alert_symbol} reached ${alert_target}")
+        st.success(f"Alert added for {alert_symbol} at ${alert_target}")
+        st.rerun()
 
 if "input_query" not in st.session_state:
     st.session_state.input_query = ""
