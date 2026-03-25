@@ -153,9 +153,7 @@ def display_honeypot_result(result):
     with col1:
         st.markdown(f"**Token:** {result.get('token_name', 'N/A')} ({result.get('token_symbol', 'N/A')})")
         st.markdown(f"**Chain:** {result.get('chain', 'Unknown')}")
-        if token_type == "evm":
-            st.markdown(f"**Holders:** {result.get('holders', 'N/A')}")
-        elif token_type in ("solana", "pumpfun"):
+        if token_type in ("evm", "solana", "pumpfun"):
             st.markdown(f"**Holders:** {result.get('holders', 'N/A')}")
     with col2:
         if token_type == "evm":
