@@ -25,24 +25,6 @@ from api_clients import fetch_new_launchpad_coins
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
-# -------------------------------
-# ✅ REAL DATA FUNCTION (NEW)
-# -------------------------------
-def get_real_price_series(coin_id):
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=1"
-        res = requests.get(url, timeout=10).json()
-
-        prices = [p[1] for p in res.get("prices", [])]
-
-        if len(prices) < 10:
-            return None
-
-        return pd.Series(prices)
-
-    except:
-        return None
-
 # Session state
 if "input_query" not in st.session_state:
     st.session_state.input_query = ""
@@ -93,28 +75,17 @@ def is_binance_symbol(symbol):
     except:
         return False
 
-# -------------------------------
-# 🔥 UPDATED ANALYSIS FUNCTION
-# -------------------------------
-def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None, coin_id=None):
-
-    # ✅ REAL DATA
-    price_series = get_real_price_series(coin_id)
-
-    # 🔁 fallback (if API fails)
-    if price_series is None:
-        st.warning("⚠️ Real data load হয়নি, fallback data ব্যবহার হচ্ছে")
-        history = [
-            price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
-            for i in range(30)
-        ]
-        price_series = pd.Series(history)
-
+# Main Analysis Function
+def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None):
+    history = [
+        price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
+        for i in range(30)
+    ]
+    price_series = pd.Series(history)
     current_price = price_series.iloc[-1]
 
     rsi = calculate_rsi(price_series).iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
-
     macd, signal = calculate_macd(price_series)
     macd_val = macd.iloc[-1]
     signal_val = signal.iloc[-1]
@@ -138,25 +109,16 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
         'close': price_series,
         'volume': volume * np.random.uniform(0.8, 1.2, size=len(price_series))
     })
-
     df = detect_candlestick_patterns(df)
     df = detect_volume_spike(df)
 
     candle_vol_ai = candlestick_volume_ai(df)
     vol_spike_msg = volume_spike_summary(df['volume_spike'].iloc[-1])
-
-    decision = ai_decision(
-        rsi, macd, signal, price_change, volume,
-        strictness=st.session_state.get('strictness', 'medium')
-    )
-
+    decision = ai_decision(rsi, macd, signal, price_change, volume, strictness=st.session_state.get('strictness', 'medium'))
     bb_signal = bollinger_breakout_signal(price, upper_band_val, lower_band_val)
     risk_msg = risk_signal(price, current_price)
 
     st.success(f"✅ {name} ({symbol}) এর বিশ্লেষণ")
-
-    st.line_chart(price_series)
-
     st.markdown(f"""
 - 🌐 **Chain:** {chain or 'N/A'}
 - 💰 **Price:** ${price:.8f}
@@ -198,6 +160,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 ### ⚠️ রিস্ক ম্যানেজমেন্ট:
 {risk_msg}
 """)
+
 # --------- Tabs ---------
 tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens"])
 
@@ -209,34 +172,87 @@ with tabs[0]:
 
     if option == "CoinGecko থেকে টোকেন খুঁজুন":
         st.session_state.input_query = st.text_input("🔍 টোকেন নাম:", value=st.session_state.input_query)
-
         if st.session_state.input_query:
             try:
                 url = f"https://api.coingecko.com/api/v3/search?query={st.session_state.input_query}"
                 res = requests.get(url, timeout=10)
                 coins = res.json().get('coins', [])
-
                 if not coins:
                     st.warning("😓 টোকেন পাওয়া যায়নি")
                 else:
                     options = {f"{c['name']} ({c['symbol'].upper()})": c['id'] for c in coins[:10]}
                     selected = st.selectbox("📋 টোকেন সিলেক্ট করুন:", list(options.keys()))
                     token_id = options[selected]
-
-                    response = requests.get(
-                        f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&market_data=true",
-                        timeout=10
-                    )
+                    response = requests.get(f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&market_data=true", timeout=10)
                     coin = response.json()
-
                     name = coin['name']
                     symbol = coin['symbol'].upper()
                     price = coin['market_data']['current_price']['usd']
                     price_change = coin['market_data'].get('price_change_percentage_1h_in_currency', {}).get('usd', 0)
                     volume = coin['market_data']['total_volume']['usd']
                     mcap = coin['market_data'].get('fully_diluted_valuation', {}).get('usd', 'N/A')
+                    binance_symbol = symbol + "USDT"
 
-                    analyze_coin(name, symbol, price, price_change, volume, "CoinGecko", mcap, token_id)
-
+                    if is_binance_symbol(binance_symbol):
+                        st.success(f"📡 Binance-listed: {binance_symbol}")
+                        start_ws_thread(binance_symbol)
+                        k = ws_kline_data.get(binance_symbol)
+                        if k:
+                            st.markdown(f"📉 লাইভ প্রাইস: ${k['close']:.6f}")
+                    else:
+                        analyze_coin(name, symbol, price, price_change, volume, "CoinGecko", mcap)
             except Exception as e:
                 st.error(f"❌ সমস্যা: {e}")
+
+    elif option == "DexScreener Address দিয়ে":
+        token_address = st.text_input("🔗 টোকেন অ্যাড্রেস দিন")
+        if st.button("📊 বিশ্লেষণ করুন") and token_address:
+            try:
+                url = f"https://api.dexscreener.com/latest/dex/search/?q={token_address}"
+                res = requests.get(url, timeout=10)
+                data = res.json()
+                if not data or 'pairs' not in data or len(data['pairs']) == 0:
+                    st.error("⚠️ কোনো ডেটা পাওয়া যায়নি।")
+                else:
+                    pair = data['pairs'][0]
+                    name = pair['baseToken']['name']
+                    symbol = pair['baseToken']['symbol'].upper()
+                    price = float(pair['priceUsd']) if pair.get('priceUsd') else 0
+                    price_change = float(pair['priceChange']['h1']) if pair.get('priceChange') else 0
+                    volume = float(pair['volume']['h24']) if pair.get('volume') else 0
+                    mcap = pair.get('fdv', 'N/A')
+                    chain = pair.get('chainId', 'Unknown')
+                    analyze_coin(name, symbol, price, price_change, volume, chain, mcap)
+            except Exception as e:
+                st.error(f"❌ সমস্যা হয়েছে: {e}")
+
+# 📈 Trending Tab
+with tabs[1]:
+    st.subheader("📈 Twitter/X Trending Coins")
+    st.markdown("🚧 ভবিষ্যতে এখানে Twitter থেকে ট্রেন্ডিং কয়েন আসবে...")
+    st.info("ট্রেন্ডিং কয়েন ডেটা এখনও যুক্ত হয়নি।")
+
+    st.subheader("🧠 নতুন টোকেন AI স্কোরিং (Pump.fun)")
+    coins = fetch_new_launchpad_coins()
+    if not coins:
+        st.warning("নতুন টোকেন পাওয়া যায়নি বা লোড হচ্ছে...")
+    else:
+        for coin in coins[:10]:
+            name = coin.get('name', 'Unknown')
+            price = coin.get('price', 0)
+            liquidity = coin.get('liquidity', 0)
+            volume_24h = coin.get('volume_24h', 0)
+            market_cap = coin.get('market_cap', 0)
+
+            coin_data = {
+                'name': name,
+                'price': price,
+                'liquidity': liquidity,
+                'volume_24h': volume_24h,
+                'market_cap': market_cap
+            }
+            analysis = analyze_new_coin(coin_data)
+            st.markdown(f"### {name}")
+            st.markdown(analysis)
+            st.divider()
+          
