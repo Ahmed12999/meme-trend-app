@@ -14,7 +14,8 @@ from ai_logic import (
     candlestick_volume_ai,
     volume_spike_summary,
     risk_signal,
-    analyze_new_coin
+    analyze_new_coin,
+    get_entry_exit_points
 )
 
 # Import alerts functions
@@ -31,7 +32,8 @@ from technicals import (
     macd_histogram_strength,
     detect_candlestick_patterns,
     detect_volume_spike,
-    risk_management_signals
+    risk_management_signals,
+    find_support_resistance
 )
 
 # ----------------------------------------------------------------------
@@ -229,7 +231,10 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     last_pattern = df['pattern'].dropna().iloc[-1] if df['pattern'].dropna().any() else None
 
-    # AI decision (from ai_logic.py)
+    # Support & Resistance
+    supports, resistances = find_support_resistance(price_series, window=5, tolerance=0.02)
+
+    # AI decision
     decision = ai_decision(rsi, macd, signal, price_change, volume,
                            strictness=st.session_state.get('strictness', 'medium'))
 
@@ -244,6 +249,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     # Risk management (from technicals.py)
     risk_msg = risk_management_signals(current_price, current_price)
+
+    # Entry/Exit suggestions
+    entry_msg, exit_msg = get_entry_exit_points(current_price, supports, resistances, rsi, macd, signal)
 
     # Check alerts (from alerts.py)
     triggered_alerts = check_alerts(symbol, current_price, rsi=rsi, volume=volume, pattern=last_pattern)
@@ -273,6 +281,15 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 {vol_spike_text}
 
 {risk_msg}
+
+### Support & Resistance
+- **Supports:** {', '.join([f'${s:.4f}' for s in supports]) if supports else 'None'}
+- **Resistances:** {', '.join([f'${r:.4f}' for r in resistances]) if resistances else 'None'}
+
+### Entry & Exit Suggestions
+{entry_msg}
+
+{exit_msg}
 
 ### AI Decision
 {decision}
