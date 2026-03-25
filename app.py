@@ -4,11 +4,9 @@ import pandas as pd
 import numpy as np
 import random
 import ccxt
-import asyncio
-import websockets
-import json
-import threading
-import time
+
+# Import WebSocket client (this will start the thread)
+from websocket_client import start_websocket_thread
 
 # Import AI functions
 from ai_logic import (
@@ -40,60 +38,6 @@ from technicals import (
     risk_management_signals,
     find_support_resistance
 )
-
-# ========================
-# WebSocket real-time data (Coinbase Pro)
-# ========================
-
-# Global dictionary to store latest prices
-if "realtime_prices" not in st.session_state:
-    st.session_state.realtime_prices = {
-        "BTC-USD": {"price": 0, "volume": 0, "last_update": None},
-        "ETH-USD": {"price": 0, "volume": 0, "last_update": None},
-        "SOL-USD": {"price": 0, "volume": 0, "last_update": None}
-    }
-
-def run_coinbase_ws():
-    """Run the WebSocket connection in a separate thread."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(coinbase_ws_handler())
-    loop.close()
-
-async def coinbase_ws_handler():
-    """Connect to Coinbase Pro WebSocket and listen for ticker updates."""
-    uri = "wss://ws-feed.exchange.coinbase.com"
-    while True:
-        try:
-            async with websockets.connect(uri) as ws:
-                # Subscribe to ticker channel for multiple products
-                subscribe_msg = {
-                    "type": "subscribe",
-                    "product_ids": ["BTC-USD", "ETH-USD", "SOL-USD"],
-                    "channels": ["ticker"]
-                }
-                await ws.send(json.dumps(subscribe_msg))
-                async for message in ws:
-                    data = json.loads(message)
-                    if data.get("type") == "ticker":
-                        product = data.get("product_id")
-                        price = float(data.get("price", 0))
-                        volume = float(data.get("volume_24h", 0))
-                        # Update session state
-                        st.session_state.realtime_prices[product] = {
-                            "price": price,
-                            "volume": volume,
-                            "last_update": time.time()
-                        }
-        except Exception as e:
-            print(f"Coinbase WebSocket error: {e}")
-            await asyncio.sleep(5)  # Reconnect after 5 seconds
-
-# Start WebSocket thread (only once)
-if "ws_thread_started" not in st.session_state:
-    st.session_state.ws_thread_started = True
-    ws_thread = threading.Thread(target=run_coinbase_ws, daemon=True)
-    ws_thread.start()
 
 # ----------------------------------------------------------------------
 # Trending tokens (working DexScreener endpoint)
@@ -361,6 +305,9 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 st.set_page_config(page_title="AI Crypto Advisor", page_icon="📈")
 st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
 
+# Start the WebSocket thread for real-time prices
+start_websocket_thread()
+
 # Sidebar for alerts
 with st.sidebar:
     st.header("🔔 Alerts")
@@ -511,10 +458,6 @@ with tabs[1]:
             else:
                 st.info("No trending coins found.")
 
-# ========================
-# Real-Time Data Tab (Fixed)
-# ========================
-
 with tabs[2]:
     st.subheader("📡 Real-Time Prices (Coinbase Pro)")
     st.markdown("Prices update every few seconds via WebSocket. Data is fresh and live.")
@@ -524,21 +467,23 @@ with tabs[2]:
             label="BTC/USD",
             value=f"${st.session_state.realtime_prices['BTC-USD']['price']:,.2f}",
             delta=None,
-            help="Last trade price"
+            help="Last trade price from Coinbase Pro"
         )
         st.caption(f"24h Volume: ${st.session_state.realtime_prices['BTC-USD']['volume']:,.0f}")
     with col2:
         st.metric(
             label="ETH/USD",
             value=f"${st.session_state.realtime_prices['ETH-USD']['price']:,.2f}",
-            delta=None
+            delta=None,
+            help="Last trade price from Coinbase Pro"
         )
         st.caption(f"24h Volume: ${st.session_state.realtime_prices['ETH-USD']['volume']:,.0f}")
     with col3:
         st.metric(
             label="SOL/USD",
             value=f"${st.session_state.realtime_prices['SOL-USD']['price']:,.2f}",
-            delta=None
+            delta=None,
+            help="Last trade price from Coinbase Pro"
         )
         st.caption(f"24h Volume: ${st.session_state.realtime_prices['SOL-USD']['volume']:,.0f}")
     # Auto-refresh every 2 seconds
