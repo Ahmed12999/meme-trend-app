@@ -206,3 +206,49 @@ def analyze_new_coin(coin_data):
         verdict = "❌ দুর্বল coin — এড়িয়ে চলুন"
 
     return f"{verdict}\n\n{coin_data['name']} বিশ্লেষণ:\n" + "\n".join(notes)
+
+
+def get_entry_exit_points(current_price, supports, resistances, rsi, macd, signal):
+    """
+    Suggest entry and exit points based on support/resistance and indicators.
+    Returns a formatted string with recommendations.
+    """
+    entry_msg = ""
+    exit_msg = ""
+    
+    # Find nearest support below and resistance above
+    nearest_support = max([s for s in supports if s < current_price], default=None)
+    nearest_resistance = min([r for r in resistances if r > current_price], default=None)
+    
+    # Entry suggestions
+    if nearest_support:
+        if current_price <= nearest_support * 1.02:  # near support
+            entry_msg += f"🔵 এন্ট্রি জোন: প্রাইস সাপোর্টের কাছাকাছি (${nearest_support:.4f})। "
+            # Additional indicator check
+            if rsi < 40:
+                entry_msg += "RSI ওভারসল্ড জোনে, বায় সিগন্যাল শক্তিশালী।"
+            elif macd.iloc[-1] > signal.iloc[-1]:
+                entry_msg += "MACD বুলিশ ক্রসওভার, বায় এন্ট্রি বিবেচনা করুন।"
+            else:
+                entry_msg += "সাপোর্টে থাকায় এন্ট্রি বিবেচনা করা যেতে পারে।"
+        else:
+            entry_msg += f"🔵 সাপোর্ট লেভেল ${nearest_support:.4f} (বর্তমান প্রাইস থেকে {((current_price - nearest_support)/nearest_support)*100:.1f}% উপরে)। সাপোর্টে পুলব্যাকের জন্য অপেক্ষা করুন।"
+    else:
+        entry_msg += "🔵 স্পষ্ট সাপোর্ট লেভেল পাওয়া যায়নি।"
+    
+    # Exit suggestions
+    if nearest_resistance:
+        if current_price >= nearest_resistance * 0.98:  # near resistance
+            exit_msg += f"🔴 এক্সিট জোন: প্রাইস রেজিস্ট্যান্সের কাছাকাছি (${nearest_resistance:.4f})। "
+            if rsi > 60:
+                exit_msg += "RSI ওভারবট, লাভ বুকিং করার সময়।"
+            elif macd.iloc[-1] < signal.iloc[-1]:
+                exit_msg += "MACD বিয়ারিশ ক্রসওভার, বিক্রি বিবেচনা করুন।"
+            else:
+                exit_msg += "রেজিস্ট্যান্সে থাকায় প্রফিট বুক করা নিরাপদ।"
+        else:
+            exit_msg += f"🔴 টার্গেট রেজিস্ট্যান্স ${nearest_resistance:.4f} (বর্তমান প্রাইস থেকে {((nearest_resistance - current_price)/current_price)*100:.1f}% উপরে)। এক্সিট সেখানে রাখুন।"
+    else:
+        exit_msg += "🔴 স্পষ্ট রেজিস্ট্যান্স লেভেল পাওয়া যায়নি।"
+    
+    return entry_msg, exit_msg
