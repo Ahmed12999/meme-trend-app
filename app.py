@@ -324,7 +324,7 @@ if "input_query" not in st.session_state:
 if "selected_token" not in st.session_state:
     st.session_state.selected_token = ""
 
-tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens", "⚡ Real-Time Data (CoinCap)"])
+tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens"])
 
 with tabs[0]:
     option = st.radio("Source:", ("CoinGecko", "DexScreener", "Exchange (ccxt)"))
@@ -452,31 +452,3 @@ with tabs[1]:
                     st.write(f"✅ **{c['name']} ({c['symbol']})** – Rank #{c['market_cap_rank']} | 🔥 Score: {c['score']}")
             else:
                 st.info("No trending coins found.")
-
-with tabs[2]:
-    st.subheader("📡 Real-Time Prices (CoinCap REST API)")
-    st.markdown("Prices update every 2 seconds via free REST API. No WebSocket needed.")
-
-    def fetch_coincap_price(asset_id):
-        try:
-            url = f"https://api.coincap.io/v2/assets/{asset_id}"
-            response = requests.get(url, timeout=5)
-            data = response.json()
-            return float(data["data"]["priceUsd"])
-        except Exception as e:
-            return None
-
-    btc_price = fetch_coincap_price("bitcoin")
-    eth_price = fetch_coincap_price("ethereum")
-    sol_price = fetch_coincap_price("solana")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(label="BTC/USD", value=f"${btc_price:,.2f}" if btc_price else "N/A")
-    with col2:
-        st.metric(label="ETH/USD", value=f"${eth_price:,.2f}" if eth_price else "N/A")
-    with col3:
-        st.metric(label="SOL/USD", value=f"${sol_price:,.2f}" if sol_price else "N/A")
-
-    time.sleep(2)
-    st.rerun()
