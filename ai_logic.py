@@ -1,3 +1,6 @@
+# ai_logic.py
+# Enhanced AI functions for crypto analysis
+
 def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
     """
     Generates a detailed trading decision based on RSI, MACD, price change, and volume.
