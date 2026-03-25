@@ -511,6 +511,10 @@ with tabs[1]:
             else:
                 st.info("No trending coins found.")
 
+# ========================
+# Real-Time Data Tab (Fixed)
+# ========================
+
 with tabs[2]:
     st.subheader("📡 Real-Time Prices (Coinbase Pro)")
     st.markdown("Prices update every few seconds via WebSocket. Data is fresh and live.")
@@ -520,4 +524,24 @@ with tabs[2]:
             label="BTC/USD",
             value=f"${st.session_state.realtime_prices['BTC-USD']['price']:,.2f}",
             delta=None,
-            help=
+            help="Last trade price"
+        )
+        st.caption(f"24h Volume: ${st.session_state.realtime_prices['BTC-USD']['volume']:,.0f}")
+    with col2:
+        st.metric(
+            label="ETH/USD",
+            value=f"${st.session_state.realtime_prices['ETH-USD']['price']:,.2f}",
+            delta=None
+        )
+        st.caption(f"24h Volume: ${st.session_state.realtime_prices['ETH-USD']['volume']:,.0f}")
+    with col3:
+        st.metric(
+            label="SOL/USD",
+            value=f"${st.session_state.realtime_prices['SOL-USD']['price']:,.2f}",
+            delta=None
+        )
+        st.caption(f"24h Volume: ${st.session_state.realtime_prices['SOL-USD']['volume']:,.0f}")
+    # Auto-refresh every 2 seconds
+    st.empty()
+    time.sleep(2)
+    st.rerun()
