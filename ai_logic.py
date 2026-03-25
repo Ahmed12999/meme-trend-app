@@ -1,7 +1,11 @@
 def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
+    """
+    Generates a detailed trading decision based on RSI, MACD, price change, and volume.
+    strictness can be "low", "medium", or "high".
+    """
     decision = ""
 
-    # RSI ডিসিশন - strictness অনুযায়ী থ্রেশহোল্ড পরিবর্তন
+    # RSI thresholds based on strictness
     rsi_oversold = 30 if strictness == "low" else 35 if strictness == "medium" else 40
     rsi_overbought = 70 if strictness == "low" else 65 if strictness == "medium" else 60
 
@@ -12,8 +16,9 @@ def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
     else:
         decision += "📊 RSI মাঝামাঝি, মার্কেট সাইডওয়ে থাকতে পারে।\n"
 
-    macd_val = macd.iloc[-1]
-    signal_val = signal.iloc[-1]
+    # MACD analysis
+    macd_val = macd.iloc[-1] if hasattr(macd, 'iloc') else macd
+    signal_val = signal.iloc[-1] if hasattr(signal, 'iloc') else signal
 
     if macd_val > signal_val:
         decision += "✅ MACD bullish crossover (Buy signal)।\n"
@@ -22,8 +27,8 @@ def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
     else:
         decision += "⏸️ MACD নিরপেক্ষ।\n"
 
+    # Price change threshold
     price_change_threshold = 0.5 if strictness == "low" else 1 if strictness == "medium" else 1.5
-
     if price_change > price_change_threshold:
         decision += f"🚀 1h প্রাইস +{price_change:.2f}% — শক্তিশালী মুভমেন্ট!\n"
     elif price_change < -price_change_threshold:
@@ -31,12 +36,14 @@ def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
     else:
         decision += f"⏳ 1h প্রাইস পরিবর্তন খুব কম।\n"
 
-    avg_volume = 1000000
+    # Volume analysis
+    avg_volume = 1000000  # can be adjusted
     if volume > avg_volume * 1.5:
         decision += "📈 ভলিউম স্পাইক! ট্রেডে উচ্চ সক্রিয়তা চলছে।\n"
     else:
         decision += "📉 ভলিউম স্বাভাবিক।\n"
 
+    # Final recommendation based on strictness
     if strictness == "high":
         if rsi < rsi_oversold and macd_val > signal_val and volume > avg_volume * 1.5:
             decision += "\n🟢 **AI পরামর্শ: এখন দাম বাড়তে পারে, ট্রেড নিন।**"
@@ -58,6 +65,7 @@ def ai_decision(rsi, macd, signal, price_change, volume, strictness="medium"):
 
 
 def bollinger_breakout_signal(price, upper_band, lower_band):
+    """Return a signal based on Bollinger Bands."""
     if price > upper_band:
         return "🚨 দাম Upper Bollinger Band এর উপরে — Breakout হতে পারে!"
     elif price < lower_band:
@@ -67,6 +75,7 @@ def bollinger_breakout_signal(price, upper_band, lower_band):
 
 
 def calculate_sma_crossover(short_sma, long_sma):
+    """Detect SMA crossover signals."""
     if len(short_sma) < 2 or len(long_sma) < 2:
         return "⚪ SMA সিগন্যাল বিশ্লেষণের জন্য যথেষ্ট ডেটা নেই।"
 
@@ -84,6 +93,7 @@ def calculate_sma_crossover(short_sma, long_sma):
 
 
 def macd_histogram_signal(macd, signal):
+    """Analyze MACD histogram for trend changes."""
     histogram = macd - signal
     if histogram.iloc[-1] > 0 and histogram.iloc[-2] <= 0:
         return "🟢 MACD হিষ্টোগ্রাম ইতিবাচক প্রবণতা শুরু করেছে।"
@@ -93,10 +103,13 @@ def macd_histogram_signal(macd, signal):
         return "⚪ MACD হিষ্টোগ্রাম স্থিতিশীল।"
 
 
-def candlestick_volume_ai(df):
+def candlestick_volume_ai(df, spike):
+    """
+    Combines candlestick patterns and volume spike for a comprehensive analysis.
+    df must contain a 'pattern' column (from detect_candlestick_patterns).
+    spike is a boolean indicating whether a volume spike occurred.
+    """
     last_pattern = df['pattern'].dropna().iloc[-1] if df['pattern'].dropna().any() else None
-    last_vol_spike = df['volume_spike'].iloc[-1]
-
     confidence = 0
     messages = []
 
@@ -117,7 +130,7 @@ def candlestick_volume_ai(df):
     else:
         messages.append("🕯️ কোন স্পষ্ট ক্যান্ডেলস্টিক প্যাটার্ন পাওয়া যায়নি।")
 
-    if last_vol_spike:
+    if spike:
         confidence += 3
         messages.append("📈 ভলিউম স্পাইক দেখা গেছে, বড় ইনভেস্টর (হুইল) প্রবেশ করছে।")
     else:
@@ -137,10 +150,12 @@ def candlestick_volume_ai(df):
 
 
 def volume_spike_summary(spike):
+    """Return a simple summary of volume spike."""
     return "📈 হুইল ট্রেডার ঢুকছে, সতর্কভাবে Buy এনট্রি বিবেচনা করা যেতে পারে।" if spike else "📉 ভলিউম স্বাভাবিক, হুইল সক্রিয় নয়।"
 
 
 def risk_signal(entry_price, current_price, sl_pct=5, tp_pct=10):
+    """Calculate and display stop loss and take profit levels."""
     sl = entry_price * (1 - sl_pct / 100)
     tp = entry_price * (1 + tp_pct / 100)
     msg = f"🎯 এন্ট্রি: ${entry_price:.6f} → 🎯 SL: ${sl:.6f}, 🏆 TP: ${tp:.6f}"
@@ -188,4 +203,3 @@ def analyze_new_coin(coin_data):
         verdict = "❌ দুর্বল coin — এড়িয়ে চলুন"
 
     return f"{verdict}\n\n{coin_data['name']} বিশ্লেষণ:\n" + "\n".join(notes)
-    
