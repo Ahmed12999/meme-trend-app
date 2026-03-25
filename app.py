@@ -140,8 +140,8 @@ def fetch_new_launchpad_coins():
 # ----------------------------------------------------------------------
 
 # Mapping from exchange name to ccxt exchange class
-EXCHANGE_MAP = 
-   {"Binance": ccxt.binance,
+EXCHANGE_MAP = {
+    "Binance": ccxt.binance,
     "Bybit": ccxt.bybit,
     "KuCoin": ccxt.kucoin,
     "Kraken": ccxt.kraken,
@@ -150,7 +150,8 @@ EXCHANGE_MAP =
     "Bitget": ccxt.bitget,
     "OKX": ccxt.okx,
     "Gate.io": ccxt.gate,
-    "HTX": ccxt.htx. }
+    "HTX": ccxt.htx,
+}
 
 def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
     """
