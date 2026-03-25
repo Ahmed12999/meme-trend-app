@@ -5,8 +5,20 @@ import numpy as np
 import random
 import ccxt
 
+# Import AI functions from the separate module
+from ai_logic import (
+    ai_decision,
+    bollinger_breakout_signal,
+    calculate_sma_crossover,
+    macd_histogram_signal,
+    candlestick_volume_ai,
+    volume_spike_summary,
+    risk_signal,
+    analyze_new_coin
+)
+
 # ----------------------------------------------------------------------
-# Technical indicators (mock implementations)
+# Technical indicators (kept here, could be moved to technicals.py)
 # ----------------------------------------------------------------------
 
 def calculate_rsi(series, period=14):
@@ -39,105 +51,72 @@ def calculate_bollinger_bands(series, window=20, num_std=2):
 def calculate_sma(series, period=20):
     return series.rolling(window=period).mean()
 
-def detect_rsi_divergence(price_series, rsi_series):
-    return False, False
-
 def macd_histogram_strength(macd, signal):
     hist = macd - signal
     avg = hist.abs().mean()
     strength = min(hist.iloc[-1] / avg if avg != 0 else 0, 1)
     return strength, hist.iloc[-1] > 0
 
-def detect_candlestick_patterns(df):
-    df['doji'] = np.random.choice([True, False], size=len(df))
-    df['hammer'] = np.random.choice([True, False], size=len(df))
-    return df
-
 def detect_volume_spike(df, window=20, threshold=2.0):
     df['volume_spike'] = df['volume'] > df['volume'].rolling(window=window).mean() * threshold
     return df
 
 # ----------------------------------------------------------------------
-# AI logic functions (mock)
+# Enhanced candlestick pattern detection (no external libs)
 # ----------------------------------------------------------------------
 
-def ai_decision(rsi, macd, signal, price_change, volume, strictness='medium'):
-    score = 0
-    if rsi < 30:
-        score += 1
-    elif rsi > 70:
-        score -= 1
-    if macd > signal:
-        score += 1
-    else:
-        score -= 1
-    if price_change > 5:
-        score += 1
-    elif price_change < -5:
-        score -= 1
-    if volume > 1e6:
-        score += 0.5
+def detect_candlestick_patterns(df):
+    """
+    Detect basic candlestick patterns:
+    - Bullish Engulfing
+    - Bearish Engulfing
+    - Hammer
+    - Shooting Star
+    - Doji
+    Adds a column 'pattern' to df.
+    """
+    df['pattern'] = None
 
-    if strictness == 'low':
-        buy_thresh = -0.5
-        sell_thresh = 0.5
-    elif strictness == 'high':
-        buy_thresh = 1.5
-        sell_thresh = -1.5
-    else:
-        buy_thresh = 0.5
-        sell_thresh = -0.5
+    # Doji
+    body = abs(df['close'] - df['open'])
+    upper_shadow = df['high'] - df[['close', 'open']].max(axis=1)
+    lower_shadow = df[['close', 'open']].min(axis=1) - df['low']
+    doji_condition = (body <= (df['high'] - df['low']) * 0.1) & (body != 0)
+    df.loc[doji_condition, 'pattern'] = 'Doji'
 
-    if score >= buy_thresh:
-        return "🟢 STRONG BUY"
-    elif score <= sell_thresh:
-        return "🔴 STRONG SELL"
-    else:
-        return "⚪ HOLD"
+    # Hammer: small body, long lower shadow, little upper shadow
+    hammer_condition = (lower_shadow > body * 2) & (upper_shadow < body * 0.5) & (df['close'] > df['open'])
+    df.loc[hammer_condition, 'pattern'] = 'Hammer'
 
-def bollinger_breakout_signal(price, upper, lower):
-    if price > upper:
-        return "OVERBOUGHT"
-    elif price < lower:
-        return "OVERSOLD"
-    return "NEUTRAL"
+    # Shooting Star: small body, long upper shadow, little lower shadow
+    shooting_condition = (upper_shadow > body * 2) & (lower_shadow < body * 0.5) & (df['close'] < df['open'])
+    df.loc[shooting_condition, 'pattern'] = 'Shooting Star'
 
-def calculate_sma_crossover(sma_short, sma_long):
-    if sma_short.iloc[-1] > sma_long.iloc[-1] and sma_short.iloc[-2] <= sma_long.iloc[-2]:
-        return "BULLISH CROSSOVER"
-    elif sma_short.iloc[-1] < sma_long.iloc[-1] and sma_short.iloc[-2] >= sma_long.iloc[-2]:
-        return "BEARISH CROSSOVER"
-    return "NO CROSSOVER"
+    # Engulfing patterns
+    if len(df) >= 2:
+        prev = df.shift(1)
+        # Bullish Engulfing: previous bearish, current bullish, body engulfs previous body
+        bull_engulf = (prev['close'] < prev['open']) & (df['close'] > df['open']) & (df['close'] > prev['open']) & (df['open'] < prev['close'])
+        df.loc[bull_engulf, 'pattern'] = 'Bullish Engulfing'
 
-def macd_histogram_signal(macd, signal):
-    if macd.iloc[-1] > signal.iloc[-1]:
-        return "BULLISH"
-    else:
-        return "BEARISH"
+        # Bearish Engulfing: previous bullish, current bearish, body engulfs previous body
+        bear_engulf = (prev['close'] > prev['open']) & (df['close'] < df['open']) & (df['close'] < prev['open']) & (df['open'] > prev['close'])
+        df.loc[bear_engulf, 'pattern'] = 'Bearish Engulfing'
 
-def candlestick_volume_ai(df):
-    return "Candlestick patterns: moderate"
-
-def volume_spike_summary(df):
-    spikes = df['volume_spike'].sum() if 'volume_spike' in df else 0
-    return f"Volume spikes detected: {spikes}"
-
-def risk_signal(volatility, volume, liquidity):
-    return "MEDIUM RISK"
+    return df
 
 # ----------------------------------------------------------------------
-# DexScreener Trending (WORKING)
+# Trending tokens (working DexScreener endpoint)
 # ----------------------------------------------------------------------
 
 def fetch_dexscreener_trending():
-    """Fetch trending tokens from DexScreener (working)."""
+    """Fetch trending tokens from DexScreener."""
     try:
         url = "https://api.dexscreener.com/token/trending"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
             return []
         data = response.json()
-        # Data is a list of token objects
         return data[:15]
     except Exception as e:
         st.warning(f"DexScreener trending error: {e}")
@@ -178,12 +157,8 @@ def simple_ai_for_token(token):
     else:
         return "⚪ HOLD"
 
-# ----------------------------------------------------------------------
-# CoinGecko Trending (alternative)
-# ----------------------------------------------------------------------
-
 def fetch_coingecko_trending():
-    """Fetch trending coins from CoinGecko (free)."""
+    """Fallback: trending coins from CoinGecko."""
     try:
         url = "https://api.coingecko.com/api/v3/search/trending"
         response = requests.get(url, timeout=10)
@@ -206,7 +181,7 @@ def fetch_coingecko_trending():
         return []
 
 # ----------------------------------------------------------------------
-# Multi-exchange candle fetcher using ccxt
+# Exchange (ccxt) functions
 # ----------------------------------------------------------------------
 
 EXCHANGE_MAP = {
@@ -230,7 +205,6 @@ def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
             return None
 
         exchange = exchange_class({'enableRateLimit': True})
-        # Check if interval is supported
         if interval not in exchange.timeframes:
             st.warning(f"Exchange {exchange_name} does not support {interval}. Supported: {', '.join(list(exchange.timeframes.keys())[:10])}")
             return None
@@ -245,7 +219,7 @@ def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
         return None
 
 # ----------------------------------------------------------------------
-# Real data functions (Binance REST + CoinGecko + synthetic)
+# Real price data (Binance REST + CoinGecko)
 # ----------------------------------------------------------------------
 
 @st.cache_data(ttl=60)
@@ -286,7 +260,7 @@ def get_price_series(coin_id=None, symbol=None, interval="1d", limit=100):
     return None
 
 # ----------------------------------------------------------------------
-# Main analysis function
+# Main analysis function (uses the new AI functions)
 # ----------------------------------------------------------------------
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None, coin_id=None, interval="1d", binance_symbol=None, exchange=None, exchange_symbol=None):
@@ -305,6 +279,7 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 
     current_price = price_series.iloc[-1]
 
+    # Indicators
     rsi = calculate_rsi(price_series).iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
     macd, signal = calculate_macd(price_series)
@@ -314,8 +289,8 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     upper_band, _, lower_band = calculate_bollinger_bands(price_series)
     sma_short = calculate_sma(price_series, period=20)
     sma_long = calculate_sma(price_series, period=50)
-    sma_signal = calculate_sma_crossover(sma_short, sma_long)
 
+    # Create a DataFrame for pattern and volume detection
     df = pd.DataFrame({
         'open': price_series * (1 + np.random.uniform(-0.01, 0.01, len(price_series))),
         'high': price_series * (1 + np.random.uniform(0, 0.02, len(price_series))),
@@ -323,11 +298,22 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
         'close': price_series,
         'volume': volume * np.random.uniform(0.8, 1.2, len(price_series))
     })
-    df = detect_candlestick_patterns(df)
-    df = detect_volume_spike(df)
+    df = detect_candlestick_patterns(df)   # adds 'pattern' column
+    df = detect_volume_spike(df)           # adds 'volume_spike' column
 
-    decision = ai_decision(rsi, macd_val, signal_val, price_change, volume,
+    # Use new AI functions
+    decision = ai_decision(rsi, macd, signal, price_change, volume,
                            strictness=st.session_state.get('strictness', 'medium'))
+
+    bb_signal = bollinger_breakout_signal(current_price, upper_band.iloc[-1], lower_band.iloc[-1])
+    sma_signal = calculate_sma_crossover(sma_short, sma_long)
+    macd_hist_signal = macd_histogram_signal(macd, signal)
+
+    spike_flag = df['volume_spike'].iloc[-1]
+    candle_vol_analysis = candlestick_volume_ai(df, spike_flag)
+    vol_spike_text = volume_spike_summary(spike_flag)
+
+    risk_msg = risk_signal(current_price, current_price)   # entry = current price
 
     source_info = f" ({exchange}/{exchange_symbol})" if exchange else ""
     st.success(f"✅ {name} ({symbol}) analysis complete (interval: {interval}{source_info})")
@@ -343,6 +329,15 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
 - RSI: {rsi:.2f}
 - EMA: {ema:.4f}
 - MACD: {macd_val:.4f}
+- Bollinger: {bb_signal}
+- SMA Crossover: {sma_signal}
+- MACD Histogram: {macd_hist_signal}
+
+{candle_vol_analysis}
+
+{vol_spike_text}
+
+{risk_msg}
 
 ### AI Decision
 {decision}
@@ -460,10 +455,6 @@ with tabs[0]:
                 else:
                     st.error("Failed to fetch data from exchange. Check symbol and interval.")
 
-# ----------------------------------------------------------------------
-# Trending Tokens Tab (working DexScreener + CoinGecko)
-# ----------------------------------------------------------------------
-
 with tabs[1]:
     st.subheader("🚀 Trending Tokens")
 
@@ -484,7 +475,7 @@ with tabs[1]:
 """)
             else:
                 st.info("No trending tokens found.")
-    else:  # CoinGecko
+    else:
         if st.button("Load CoinGecko Trending"):
             coins = fetch_coingecko_trending()
             if coins:
