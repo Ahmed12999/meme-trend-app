@@ -36,35 +36,68 @@ def check_honeypot(token_address, chain_id=None):
         return {"error": str(e)}
 
 
-# -------------------- Solana (RugCheck) --------------------
+# -------------------- Solana (RugCheck) with DexScreener fallback --------------------
 def check_solana_token(token_address):
-    """Check Solana token using RugCheck.xyz API."""
+    """Check Solana token using RugCheck.xyz API, fallback to DexScreener."""
+    # First try RugCheck
     try:
         url = f"https://api.rugcheck.xyz/v1/tokens/{token_address}/report"
         response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return {"error": f"RugCheck API error: {response.status_code}"}
-        data = response.json()
-        return {
-            "success": True,
-            "type": "solana",
-            "chain": "Solana",
-            "token_name": data.get("tokenMeta", {}).get("name", "N/A"),
-            "token_symbol": data.get("tokenMeta", {}).get("symbol", "N/A"),
-            "risk_score": data.get("riskScore", 0),
-            "risk_level": data.get("riskLevel", "unknown"),
-            "is_mint_authority_revoked": data.get("mintAuthorityRevoked", False),
-            "is_freeze_authority_revoked": data.get("freezeAuthorityRevoked", False),
-            "total_supply": data.get("supply", 0),
-            "holders": data.get("holderCount", 0),
-            "liquidity_usd": data.get("liquidity", 0),
-            "flags": data.get("flags", [])
-        }
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "success": True,
+                "type": "solana",
+                "chain": "Solana",
+                "token_name": data.get("tokenMeta", {}).get("name", "N/A"),
+                "token_symbol": data.get("tokenMeta", {}).get("symbol", "N/A"),
+                "risk_score": data.get("riskScore", 0),
+                "risk_level": data.get("riskLevel", "unknown"),
+                "is_mint_authority_revoked": data.get("mintAuthorityRevoked", False),
+                "is_freeze_authority_revoked": data.get("freezeAuthorityRevoked", False),
+                "total_supply": data.get("supply", 0),
+                "holders": data.get("holderCount", 0),
+                "liquidity_usd": data.get("liquidity", 0),
+                "flags": data.get("flags", [])
+            }
+        else:
+            # 400 or other error: fallback to DexScreener
+            return _solana_fallback(token_address)
     except Exception as e:
-        return {"error": str(e)}
+        return _solana_fallback(token_address, str(e))
+
+def _solana_fallback(token_address, original_error=None):
+    """Fallback: fetch token info from DexScreener."""
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={token_address}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("pairs"):
+                pair = data["pairs"][0]
+                return {
+                    "success": True,
+                    "type": "solana_fallback",
+                    "chain": "Solana (via DexScreener)",
+                    "token_name": pair.get("baseToken", {}).get("name", "Unknown"),
+                    "token_symbol": pair.get("baseToken", {}).get("symbol", "Unknown"),
+                    "price_usd": float(pair.get("priceUsd", 0)),
+                    "liquidity_usd": float(pair.get("liquidity", {}).get("usd", 0)),
+                    "volume_24h": float(pair.get("volume", {}).get("h24", 0)),
+                    "change_1h": float(pair.get("priceChange", {}).get("h1", 0)),
+                    "holders": pair.get("holders", {}).get("count", 0),
+                    "flags": ["No RugCheck data – token may be new or not indexed."]
+                }
+    except Exception:
+        pass
+    # Ultimate fallback: show error
+    msg = "Could not fetch token info from RugCheck or DexScreener."
+    if original_error:
+        msg += f" (Original error: {original_error})"
+    return {"error": msg}
 
 
-# -------------------- pump.fun (DexScreener fallback) --------------------
+# -------------------- pump.fun (DexScreener) --------------------
 def check_pumpfun_token(mint_address):
     """Check pump.fun token via DexScreener and provide risk analysis."""
     try:
@@ -96,7 +129,7 @@ def check_pumpfun_token(mint_address):
     }
 
 
-# -------------------- Display Functions --------------------
+# -------------------- Display Functions (unchanged) --------------------
 def get_risk_color(risk_level):
     if risk_level >= 90:
         return "🔴"
@@ -106,7 +139,6 @@ def get_risk_color(risk_level):
         return "🟡"
     else:
         return "🟢"
-
 
 def display_honeypot_result(result):
     """Universal display function for EVM, Solana, and pump.fun results."""
@@ -144,6 +176,9 @@ def display_honeypot_result(result):
             st.warning(f"🟡 **MEDIUM RISK** (Score: {risk_score})")
         else:
             st.error(f"🔴 **HIGH RISK** (Score: {risk_score})")
+    elif token_type == "solana_fallback":
+        st.info("ℹ️ **No RugCheck data – showing DexScreener info.**")
+        # Continue to display token info below
     else:  # pump.fun
         st.warning("⚠️ **pump.fun Token – Extremely Speculative**")
         st.info("No automated honeypot check available. Use DexScreener data and DYOR.")
@@ -153,21 +188,20 @@ def display_honeypot_result(result):
     with col1:
         st.markdown(f"**Token:** {result.get('token_name', 'N/A')} ({result.get('token_symbol', 'N/A')})")
         st.markdown(f"**Chain:** {result.get('chain', 'Unknown')}")
-        if token_type in ("evm", "solana", "pumpfun"):
+        if token_type in ("evm", "solana", "solana_fallback", "pumpfun"):
             st.markdown(f"**Holders:** {result.get('holders', 'N/A')}")
     with col2:
         if token_type == "evm":
             st.markdown(f"**Open Source:** {'✅ Yes' if result.get('open_source') else '❌ No'}")
             st.markdown(f"**Liquidity:** ${result.get('liquidity_usd', 0):,.2f}" if result.get('liquidity_usd') else "**Liquidity:** N/A")
-        elif token_type == "solana":
+        elif token_type in ("solana", "solana_fallback", "pumpfun"):
             st.markdown(f"**Liquidity:** ${result.get('liquidity_usd', 0):,.2f}" if result.get('liquidity_usd') else "**Liquidity:** N/A")
-            if result.get('is_mint_authority_revoked') is not None:
+            if token_type == "solana" and result.get('is_mint_authority_revoked') is not None:
                 st.markdown(f"**Mint Authority:** {'Revoked ✅' if result['is_mint_authority_revoked'] else 'Still Active ❌'}")
                 st.markdown(f"**Freeze Authority:** {'Revoked ✅' if result['is_freeze_authority_revoked'] else 'Still Active ❌'}")
-        elif token_type == "pumpfun":
-            st.markdown(f"**Liquidity:** ${result.get('liquidity_usd', 0):,.2f}" if result.get('liquidity_usd') else "**Liquidity:** N/A")
-            st.markdown(f"**24h Volume:** ${result.get('volume_24h', 0):,.2f}" if result.get('volume_24h') else "**24h Volume:** N/A")
-            st.markdown(f"**1h Change:** {result.get('change_1h', 0):.2f}%")
+            if token_type in ("solana_fallback", "pumpfun"):
+                st.markdown(f"**24h Volume:** ${result.get('volume_24h', 0):,.2f}" if result.get('volume_24h') else "**24h Volume:** N/A")
+                st.markdown(f"**1h Change:** {result.get('change_1h', 0):.2f}%")
 
     # ----- Taxes (EVM only) -----
     if token_type == "evm":
