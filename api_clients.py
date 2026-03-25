@@ -6,10 +6,20 @@ def get_dexscreener_pairs_by_name(token_name):
     response = requests.get(url)
     return response.json()
 
-def get_dexscreener_pair_by_address(token_address):
-    url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
+def get_dexscreener_pair_by_address(token_address, chain="solana"):
+    # More generic: pass chain as parameter
+    url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{token_address}"
     response = requests.get(url)
     return response.json()
+
+# ✅ DexScreener Trending (new)
+def get_dexscreener_trending():
+    """Fetch trending tokens from DexScreener."""
+    url = "https://api.dexscreener.com/token/trending"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    return []
 
 # ✅ CoinGecko
 def coingecko_search(token_query):
@@ -19,6 +29,12 @@ def coingecko_search(token_query):
 
 def coingecko_get_coin(token_id):
     url = f"https://api.coingecko.com/api/v3/coins/{token_id}?localization=false&tickers=false&market_data=true"
+    response = requests.get(url)
+    return response.json()
+
+def coingecko_trending():
+    """Fetch trending coins from CoinGecko."""
+    url = "https://api.coingecko.com/api/v3/search/trending"
     response = requests.get(url)
     return response.json()
 
@@ -44,15 +60,17 @@ def get_binance_klines(symbol, interval='1m', limit=30):
         print(f"Binance Klines Error: {e}")
         return None
 
-# ✅ Pump.fun Launchpad API
-def fetch_new_launchpad_coins():
+# ✅ Launchpad / New Coins (using DexScreener as fallback)
+def fetch_new_launchpad_coins(limit=15):
+    """
+    Fetch newly launched / trending tokens.
+    Uses DexScreener trending endpoint.
+    """
     try:
-        url = "https://pump.fun/api/launchpad/newly-launched"
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
-        data = res.json()
-        return data.get("coins", [])
-    except Exception as e:
-        print(f"Pump.fun API Error: {e}")
+        data = get_dexscreener_trending()
+        if data and isinstance(data, list):
+            return data[:limit]
         return []
-        
+    except Exception as e:
+        print(f"Error fetching trending tokens: {e}")
+        return []
