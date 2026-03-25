@@ -42,7 +42,6 @@ from technicals import (
 # ----------------------------------------------------------------------
 
 def fetch_dexscreener_trending():
-    """Fetch trending tokens from DexScreener (try multiple endpoints)."""
     endpoints = [
         "https://api.dexscreener.com/token/trending",
         "https://api.dexscreener.com/latest/dex/token/trending",
@@ -53,22 +52,16 @@ def fetch_dexscreener_trending():
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                # If the response is a list (like /token/trending)
                 if isinstance(data, list):
                     return data[:15]
-                # If the response has a "pairs" key (like /latest/dex/search)
                 if isinstance(data, dict) and "pairs" in data:
-                    # Filter for high volume pairs
                     pairs = data["pairs"]
-                    # Sort by volume (highest first)
                     pairs.sort(key=lambda x: float(x.get("volume", {}).get("h24", 0)), reverse=True)
                     return pairs[:15]
-                # If it's a dict with "tokens" key (sometimes used)
                 if isinstance(data, dict) and "tokens" in data:
                     return data["tokens"][:15]
         except Exception:
             continue
-    # Fallback: fetch top pairs by volume from a generic search
     try:
         url = "https://api.dexscreener.com/latest/dex/search?q=1"
         response = requests.get(url, timeout=10)
@@ -82,7 +75,6 @@ def fetch_dexscreener_trending():
     return []
 
 def format_dexscreener_token(token):
-    # If token is a pair (has baseToken), extract info
     if "baseToken" in token:
         return {
             'name': token.get('baseToken', {}).get('name', 'Unknown'),
@@ -96,7 +88,6 @@ def format_dexscreener_token(token):
             'liquidity': float(token.get('liquidity', {}).get('usd', 0)),
             'fdv': float(token.get('fdv', 0))
         }
-    # If token is a simple token object
     return {
         'name': token.get('name', 'Unknown'),
         'symbol': token.get('symbol', ''),
