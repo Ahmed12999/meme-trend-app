@@ -126,54 +126,109 @@ def risk_signal(volatility, volume, liquidity):
     return "MEDIUM RISK"
 
 # ----------------------------------------------------------------------
-# New: Real trending tokens using DexScreener
+# GMGN.ai integration (free, no API key)
 # ----------------------------------------------------------------------
 
-def fetch_new_launchpad_coins():
-    """Fetch real trending tokens from DexScreener."""
+def fetch_gmgn_trending(chain='sol', timeframe='1h', orderby='volume'):
+    """
+    Fetch trending tokens from GMGN.ai API.
+    chain: 'eth', 'bsc', 'sol', 'base', 'tron'
+    timeframe: '1m', '5m', '1h', '6h', '24h'
+    orderby: 'volume', 'marketcap', 'swaps', 'smartmoney', 'change1h'
+    """
     try:
-        url = "https://api.dexscreener.com/token/trending"
+        url = f"https://gmgn.ai/defi/quotation/v1/rank/{chain}/swaps/{timeframe}"
+        params = {
+            'orderby': orderby,
+            'direction': 'desc',
+            'filters[]': 'not_honeypot',
+            'filters[]': 'verified'
+        }
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        if data.get('code') == 0:
+            tokens = data.get('data', {}).get('rank', [])
+            return tokens
+        else:
+            return []
+    except Exception as e:
+        st.warning(f"GMGN error: {e}")
+        return []
+
+def format_gmgn_token(token):
+    """Convert GMGN token data to a displayable dict."""
+    return {
+        'name': token.get('symbol', 'Unknown'),
+        'address': token.get('address', ''),
+        'price': token.get('price', 0),
+        'change_1h': token.get('price_change_percent1h', 0),
+        'change_24h': token.get('price_change_percent', 0),
+        'volume': token.get('volume', 0),
+        'market_cap': token.get('market_cap', 0),
+        'liquidity': token.get('liquidity', 0),
+        'smart_buy_24h': token.get('smart_buy_24h', 0),
+        'holder_count': token.get('holder_count', 0),
+        'is_honeypot': token.get('is_honeypot', 0),
+        'verified': token.get('is_open_source', 0)
+    }
+
+def simple_ai_for_token(token):
+    """Basic AI score for a trending token."""
+    score = 0
+    # Positive: high volume, smart buys, positive change
+    if token.get('volume', 0) > 500000:
+        score += 1
+    if token.get('smart_buy_24h', 0) > 10:
+        score += 1
+    if token.get('change_1h', 0) > 10:
+        score += 1
+    elif token.get('change_1h', 0) < -10:
+        score -= 1
+    # Negative: honey pot risk
+    if token.get('is_honeypot', 0) == 1:
+        score -= 2
+    if score >= 1:
+        return "🟢 WATCHLIST"
+    elif score <= -1:
+        return "🔴 AVOID"
+    else:
+        return "⚪ HOLD"
+
+# ----------------------------------------------------------------------
+# CoinGecko Trending (alternative)
+# ----------------------------------------------------------------------
+
+def fetch_coingecko_trending():
+    """Fetch trending coins from CoinGecko (free)."""
+    try:
+        url = "https://api.coingecko.com/api/v3/search/trending"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
             return []
         data = response.json()
-        # The API returns a dict with "tokens" key
-        tokens = data.get("tokens", [])[:10]   # limit to 10 for performance
+        coins = data.get("coins", [])[:10]
         result = []
-        for t in tokens:
+        for item in coins:
+            coin = item["item"]
             result.append({
-                "name": t.get("name", "Unknown"),
-                "symbol": t.get("symbol", ""),
-                "price": float(t.get("priceUsd", 0)),
-                "change": float(t.get("priceChange", {}).get("h24", 0)),
-                "volume": float(t.get("volume", {}).get("h24", 0)),
-                "chain": t.get("chainId", ""),
-                "address": t.get("address", "")
+                "name": coin.get("name", "Unknown"),
+                "symbol": coin.get("symbol", "").upper(),
+                "market_cap_rank": coin.get("market_cap_rank", 0),
+                "score": item.get("score", 0)
             })
         return result
     except Exception as e:
-        st.warning(f"Trending data fetch failed: {e}")
+        st.warning(f"CoinGecko trending error: {e}")
         return []
 
-def analyze_new_coin(coin):
-    """Generate a short analysis for a trending token."""
-    score = 0
-    if coin.get("volume", 0) > 1_000_000:
-        score += 1
-    if coin.get("change", 0) > 10:
-        score += 1
-    elif coin.get("change", 0) < -10:
-        score -= 1
+# ----------------------------------------------------------------------
+# DexScreener wrapper (for compatibility)
+# ----------------------------------------------------------------------
 
-    if score >= 1:
-        decision = "🟢 WATCHLIST"
-    elif score <= -1:
-        decision = "🔴 AVOID"
-    else:
-        decision = "⚪ HOLD"
-
-    return (f"✅ **{coin['name']} ({coin['symbol']})** – {decision}  \n"
-            f"   💰 ${coin['price']:.6f}  |  📊 {coin['change']:.1f}%  |  📦 ${coin['volume']:,.0f}  |  🔗 {coin.get('chain', '')}")
+def fetch_dexscreener_trending():
+    """Note: DexScreener trending endpoint may not work. Returns empty."""
+    # Placeholder – actual endpoint doesn't exist
+    return []
 
 # ----------------------------------------------------------------------
 # Multi-exchange candle fetcher using ccxt
@@ -193,7 +248,6 @@ EXCHANGE_MAP = {
 }
 
 def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
-    """Fetch OHLCV candles from an exchange using ccxt."""
     try:
         exchange_class = EXCHANGE_MAP.get(exchange_name)
         if not exchange_class:
@@ -201,9 +255,9 @@ def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
             return None
 
         exchange = exchange_class({'enableRateLimit': True})
-        # Check if interval is supported by exchange
+        # Check if interval is supported
         if interval not in exchange.timeframes:
-            st.warning(f"Exchange {exchange_name} does not support {interval} interval. Supported: {', '.join(list(exchange.timeframes.keys())[:10])}")
+            st.warning(f"Exchange {exchange_name} does not support {interval}. Supported: {', '.join(list(exchange.timeframes.keys())[:10])}")
             return None
 
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
@@ -431,11 +485,48 @@ with tabs[0]:
                 else:
                     st.error("Failed to fetch data from exchange. Check symbol and interval.")
 
+# ----------------------------------------------------------------------
+# Trending Tokens Tab with GMGN.ai, CoinGecko, and DexScreener
+# ----------------------------------------------------------------------
+
 with tabs[1]:
-    st.subheader("🚀 Trending Tokens (DexScreener)")
-    coins = fetch_new_launchpad_coins()
-    if coins:
-        for coin in coins:
-            st.write(analyze_new_coin(coin))
-    else:
-        st.info("No trending tokens found. Try again later.")
+    st.subheader("🚀 Trending Tokens")
+
+    source = st.radio("Data source:", ["GMGN.ai", "CoinGecko", "DexScreener"])
+
+    if source == "GMGN.ai":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            chain = st.selectbox("Chain", ["sol", "eth", "bsc", "base", "tron"], index=0)
+        with col2:
+            timeframe = st.selectbox("Timeframe", ["1h", "6h", "24h"], index=0)
+        with col3:
+            orderby = st.selectbox("Sort by", ["volume", "marketcap", "swaps", "smartmoney"], index=0)
+
+        if st.button("Load GMGN Tokens"):
+            tokens = fetch_gmgn_trending(chain, timeframe, orderby)
+            if tokens:
+                for token in tokens[:15]:
+                    t = format_gmgn_token(token)
+                    ai = simple_ai_for_token(t)
+                    st.markdown(f"""
+**{t['name']}** (`{t['address'][:6]}...{t['address'][-4:]}`)  
+💰 ${t['price']:.8f}  |  📊 1h: {t['change_1h']:.1f}%  |  📦 Vol: ${t['volume']:,.0f}  
+🧠 Smart buys (24h): {t['smart_buy_24h']}  |  🛡️ AI: {ai}
+---
+""")
+            else:
+                st.info("No tokens found. Try different chain or timeframe.")
+
+    elif source == "CoinGecko":
+        if st.button("Load CoinGecko Trending"):
+            coins = fetch_coingecko_trending()
+            if coins:
+                for c in coins:
+                    st.write(f"✅ **{c['name']} ({c['symbol']})** – Rank #{c['market_cap_rank']} | 🔥 Score: {c['score']}")
+            else:
+                st.info("No trending coins found.")
+
+    else:  # DexScreener
+        st.warning("DexScreener trending endpoint may not work. Use GMGN.ai or CoinGecko.")
+        # Optionally you can keep a placeholder or remove this.
