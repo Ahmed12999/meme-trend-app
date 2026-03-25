@@ -255,4 +255,4 @@ with tabs[1]:
             st.markdown(f"### {name}")
             st.markdown(analysis)
             st.divider()
-          
+         
