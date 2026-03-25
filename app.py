@@ -3,10 +3,10 @@ import requests
 import pandas as pd
 import numpy as np
 import random
-import ccxt  # নতুন যোগ
+import ccxt
 
 # ----------------------------------------------------------------------
-# Mock implementations of missing modules (technicals, ai_logic, api_clients)
+# Technical indicators (mock implementations)
 # ----------------------------------------------------------------------
 
 def calculate_rsi(series, period=14):
@@ -58,7 +58,7 @@ def detect_volume_spike(df, window=20, threshold=2.0):
     return df
 
 # ----------------------------------------------------------------------
-# Mock AI logic functions
+# AI logic functions (mock)
 # ----------------------------------------------------------------------
 
 def ai_decision(rsi, macd, signal, price_change, volume, strictness='medium'):
@@ -125,21 +125,60 @@ def volume_spike_summary(df):
 def risk_signal(volatility, volume, liquidity):
     return "MEDIUM RISK"
 
-def analyze_new_coin(coin):
-    return f"✅ {coin['name']} – AI: HOLD (low volume)"
+# ----------------------------------------------------------------------
+# New: Real trending tokens using DexScreener
+# ----------------------------------------------------------------------
 
 def fetch_new_launchpad_coins():
-    return [
-        {"name": "PepeMoon", "symbol": "PEPEMOON", "price": 0.0000123, "change": 45.6},
-        {"name": "Shiba2.0", "symbol": "SHIBA2", "price": 0.00000045, "change": 12.3},
-        {"name": "FlokiDoge", "symbol": "FLOKID", "price": 0.0000567, "change": 8.9},
-    ]
+    """Fetch real trending tokens from DexScreener."""
+    try:
+        url = "https://api.dexscreener.com/token/trending"
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return []
+        data = response.json()
+        # The API returns a dict with "tokens" key
+        tokens = data.get("tokens", [])[:10]   # limit to 10 for performance
+        result = []
+        for t in tokens:
+            result.append({
+                "name": t.get("name", "Unknown"),
+                "symbol": t.get("symbol", ""),
+                "price": float(t.get("priceUsd", 0)),
+                "change": float(t.get("priceChange", {}).get("h24", 0)),
+                "volume": float(t.get("volume", {}).get("h24", 0)),
+                "chain": t.get("chainId", ""),
+                "address": t.get("address", "")
+            })
+        return result
+    except Exception as e:
+        st.warning(f"Trending data fetch failed: {e}")
+        return []
+
+def analyze_new_coin(coin):
+    """Generate a short analysis for a trending token."""
+    score = 0
+    if coin.get("volume", 0) > 1_000_000:
+        score += 1
+    if coin.get("change", 0) > 10:
+        score += 1
+    elif coin.get("change", 0) < -10:
+        score -= 1
+
+    if score >= 1:
+        decision = "🟢 WATCHLIST"
+    elif score <= -1:
+        decision = "🔴 AVOID"
+    else:
+        decision = "⚪ HOLD"
+
+    return (f"✅ **{coin['name']} ({coin['symbol']})** – {decision}  \n"
+            f"   💰 ${coin['price']:.6f}  |  📊 {coin['change']:.1f}%  |  📦 ${coin['volume']:,.0f}  |  🔗 {coin.get('chain', '')}")
 
 # ----------------------------------------------------------------------
-# NEW: Multi-exchange candle fetcher using ccxt
+# Multi-exchange candle fetcher using ccxt
 # ----------------------------------------------------------------------
 
-# Mapping from exchange name to ccxt exchange class
 EXCHANGE_MAP = {
     "Binance": ccxt.binance,
     "Bybit": ccxt.bybit,
@@ -154,20 +193,19 @@ EXCHANGE_MAP = {
 }
 
 def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
-    """
-    Fetch OHLCV candles from an exchange using ccxt.
-    Returns a pandas Series of closing prices, or None if failed.
-    """
+    """Fetch OHLCV candles from an exchange using ccxt."""
     try:
         exchange_class = EXCHANGE_MAP.get(exchange_name)
         if not exchange_class:
-            st.warning(f"এক্সচেঞ্জ {exchange_name} সাপোর্টেড নয়।")
+            st.warning(f"Exchange {exchange_name} not supported.")
             return None
 
-        exchange = exchange_class({
-            'enableRateLimit': True,
-        })
-        # Convert interval to ccxt format (e.g., '5m')
+        exchange = exchange_class({'enableRateLimit': True})
+        # Check if interval is supported by exchange
+        if interval not in exchange.timeframes:
+            st.warning(f"Exchange {exchange_name} does not support {interval} interval. Supported: {', '.join(list(exchange.timeframes.keys())[:10])}")
+            return None
+
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
         if not ohlcv:
             return None
@@ -178,19 +216,14 @@ def get_candles_from_exchange(exchange_name, symbol, interval="5m", limit=100):
         return None
 
 # ----------------------------------------------------------------------
-# REAL DATA FUNCTIONS (Binance REST + CoinGecko + synthetic)
+# Real data functions (Binance REST + CoinGecko + synthetic)
 # ----------------------------------------------------------------------
 
 @st.cache_data(ttl=60)
 def get_binance_price_series(symbol, interval="5m", limit=100):
-    """Fallback: direct Binance REST API."""
     try:
         url = "https://api.binance.com/api/v3/klines"
-        params = {
-            "symbol": symbol.upper(),
-            "interval": interval,
-            "limit": limit
-        }
+        params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
         response = requests.get(url, params=params, timeout=10)
         if response.status_code != 200:
             return None
@@ -202,7 +235,6 @@ def get_binance_price_series(symbol, interval="5m", limit=100):
 
 @st.cache_data(ttl=60)
 def get_coingecko_price_series(coin_id):
-    """Fallback: CoinGecko 1d data."""
     try:
         url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=1"
         res = requests.get(url, timeout=10).json()
@@ -213,68 +245,37 @@ def get_coingecko_price_series(coin_id):
     except:
         return None
 
-def get_price_series(coin_id=None, symbol=None, interval="1d", limit=100, exchange=None):
-    """
-    Unified price series fetcher.
-    If exchange is provided, try ccxt first.
-    Else if interval small and symbol is Binance-style (e.g., BTCUSDT), try Binance REST.
-    Else try CoinGecko, else synthetic.
-    """
-    # Try ccxt if exchange specified
-    if exchange and symbol:
-        # Convert symbol to exchange format: if symbol is like "BTCUSDT" and exchange is Binance, we need "BTC/USDT"
-        # For simplicity, we assume the user will input the symbol in the format expected by the exchange.
-        # In the UI, we'll let the user type the symbol manually or we'll guess.
-        # For now, we'll use the symbol as is. We'll handle in analyze_coin.
-        # Actually, we'll pass the full symbol (e.g., "BTC/USDT") to ccxt.
-        # To avoid confusion, we'll construct a mapping in analyze_coin.
-        # We'll create a separate path.
-        pass
-
-    # If interval small and we have a Binance symbol candidate
+def get_price_series(coin_id=None, symbol=None, interval="1d", limit=100):
     if interval in ['1m', '5m', '10m', '15m', '30m', '1h'] and symbol:
-        # Try Binance REST
         binance_series = get_binance_price_series(symbol, interval, limit)
         if binance_series is not None:
             return binance_series
-
-    # Fallback to CoinGecko (1-day data)
     if coin_id:
         cg_series = get_coingecko_price_series(coin_id)
         if cg_series is not None:
             return cg_series
-
-    # No data
     return None
 
 # ----------------------------------------------------------------------
-# Main analysis function (modified to accept exchange and custom symbol)
+# Main analysis function
 # ----------------------------------------------------------------------
 
 def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=None, coin_id=None, interval="1d", binance_symbol=None, exchange=None, exchange_symbol=None):
-    """Run all indicators and show AI decision."""
     price_series = None
 
-    # If exchange and exchange_symbol provided, use ccxt
     if exchange and exchange_symbol:
         price_series = get_candles_from_exchange(exchange, exchange_symbol, interval=interval, limit=100)
 
-    # If still no data, try get_price_series with fallbacks
     if price_series is None:
         price_series = get_price_series(coin_id=coin_id, symbol=binance_symbol, interval=interval, limit=100)
 
-    # Synthetic fallback
     if price_series is None:
-        history = [
-            price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005))
-            for i in range(30)
-        ]
+        history = [price * (1 + (price_change / 100) * i / 10 + random.uniform(-0.005, 0.005)) for i in range(30)]
         price_series = pd.Series(history)
-        st.info("⚠️ রিয়েল ডাটা পাওয়া যায়নি। সিনথেটিক ডাটা ব্যবহার করা হচ্ছে।")
+        st.info("⚠️ No real data – using synthetic data.")
 
     current_price = price_series.iloc[-1]
 
-    # Calculate indicators
     rsi = calculate_rsi(price_series).iloc[-1]
     ema = calculate_ema(price_series).iloc[-1]
     macd, signal = calculate_macd(price_series)
@@ -282,18 +283,10 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
     signal_val = signal.iloc[-1]
 
     upper_band, _, lower_band = calculate_bollinger_bands(price_series)
-    upper_band_val = upper_band.iloc[-1]
-    lower_band_val = lower_band.iloc[-1]
-
     sma_short = calculate_sma(price_series, period=20)
     sma_long = calculate_sma(price_series, period=50)
     sma_signal = calculate_sma_crossover(sma_short, sma_long)
 
-    macd_trend_signal = macd_histogram_signal(macd, signal)
-    _, rsi_div = detect_rsi_divergence(price_series, calculate_rsi(price_series))
-    macd_quant, _ = macd_histogram_strength(macd, signal)
-
-    # Create a simple DataFrame for candlestick and volume detection
     df = pd.DataFrame({
         'open': price_series * (1 + np.random.uniform(-0.01, 0.01, len(price_series))),
         'high': price_series * (1 + np.random.uniform(0, 0.02, len(price_series))),
@@ -301,31 +294,28 @@ def analyze_coin(name, symbol, price, price_change, volume, chain=None, mcap=Non
         'close': price_series,
         'volume': volume * np.random.uniform(0.8, 1.2, len(price_series))
     })
-
     df = detect_candlestick_patterns(df)
     df = detect_volume_spike(df)
 
-    decision = ai_decision(
-        rsi, macd_val, signal_val, price_change, volume,
-        strictness=st.session_state.get('strictness', 'medium')
-    )
+    decision = ai_decision(rsi, macd_val, signal_val, price_change, volume,
+                           strictness=st.session_state.get('strictness', 'medium'))
 
     source_info = f" ({exchange}/{exchange_symbol})" if exchange else ""
-    st.success(f"✅ {name} ({symbol}) বিশ্লেষণ সম্পন্ন (ইন্টারভাল: {interval}{source_info})")
+    st.success(f"✅ {name} ({symbol}) analysis complete (interval: {interval}{source_info})")
     st.line_chart(price_series)
 
     st.markdown(f"""
-- 💰 মূল্য: ${price:.8f}
-- 📊 পরিবর্তন: {price_change:.2f}%
-- 📦 ভলিউম: ${volume:,.2f}
-- ⏱️ ইন্টারভাল: {interval}
+- 💰 Price: ${price:.8f}
+- 📊 Change: {price_change:.2f}%
+- 📦 Volume: ${volume:,.2f}
+- ⏱️ Interval: {interval}
 
-### ইন্ডিকেটরসমূহ
+### Indicators
 - RSI: {rsi:.2f}
 - EMA: {ema:.4f}
 - MACD: {macd_val:.4f}
 
-### AI সিদ্ধান্ত
+### AI Decision
 {decision}
 """)
 
@@ -344,28 +334,26 @@ if "selected_token" not in st.session_state:
 tabs = st.tabs(["📊 বিশ্লেষণ", "📈 Trending Tokens"])
 
 with tabs[0]:
-    option = st.radio("সোর্স নির্বাচন করুন:", ("CoinGecko", "DexScreener", "Exchange (ccxt)"))
-    strictness = st.radio("AI স্ট্রিক্টনেস:", ("low", "medium", "high"), index=1)
+    option = st.radio("Source:", ("CoinGecko", "DexScreener", "Exchange (ccxt)"))
+    strictness = st.radio("AI Strictness:", ("low", "medium", "high"), index=1)
     st.session_state.strictness = strictness
 
     interval_options = ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"]
-    interval = st.selectbox("টাইম ইন্টারভাল নির্বাচন করুন:", interval_options, index=2)
+    interval = st.selectbox("Select interval:", interval_options, index=2)
 
     if option == "CoinGecko":
-        query = st.text_input("কয়েনের নাম লিখুন (যেমন: bitcoin):")
-
+        query = st.text_input("Coin name (e.g., bitcoin):")
         if query:
             try:
                 search_res = requests.get(f"https://api.coingecko.com/api/v3/search?query={query}", timeout=10).json()
                 coins = search_res.get('coins', [])
                 if not coins:
-                    st.error("কোন কয়েন পাওয়া যায়নি।")
+                    st.error("No coin found.")
                 else:
-                    selected = st.selectbox("নিচ থেকে নির্বাচন করুন:", [c['name'] for c in coins[:10]])
+                    selected = st.selectbox("Select:", [c['name'] for c in coins[:10]])
                     coin_data = next(c for c in coins if c['name'] == selected)
                     token_id = coin_data['id']
                     symbol = coin_data['symbol'].upper()
-
                     binance_symbol = f"{symbol}USDT" if symbol != "USDT" else "USDT"
 
                     coin_res = requests.get(
@@ -389,16 +377,14 @@ with tabs[0]:
                 st.error(f"API error: {e}")
 
     elif option == "DexScreener":
-        address = st.text_input("টোকেনের ঠিকানা (ইথেরিয়াম/বিএসসি ইত্যাদি):")
+        address = st.text_input("Token address (Ethereum, BSC, etc.):")
         if address:
             try:
                 data = requests.get(f"https://api.dexscreener.com/latest/dex/search/?q={address}", timeout=10).json()
                 if not data.get("pairs"):
-                    st.error("এই ঠিকানার জন্য কোন পেয়ার পাওয়া যায়নি।")
+                    st.error("No pair found for this address.")
                 else:
                     p = data["pairs"][0]
-                    if interval in ["1m","5m","10m"]:
-                        st.info("DexScreener-এ ছোট ইন্টারভালের জন্য বিন্যান্স ডাটা পাওয়া যাবে না। সিনথেটিক ডাটা ব্যবহার করা হবে।")
                     analyze_coin(
                         p['baseToken']['name'],
                         p['baseToken']['symbol'],
@@ -413,21 +399,14 @@ with tabs[0]:
                 st.error(f"DexScreener error: {e}")
 
     else:  # Exchange (ccxt)
-        st.info("এক্সচেঞ্জ থেকে সরাসরি ক্যান্ডেল ডাটা আনতে ccxt ব্যবহার করা হবে।")
-        exchange_name = st.selectbox("এক্সচেঞ্জ নির্বাচন করুন:", list(EXCHANGE_MAP.keys()))
-        # Symbol input: user must enter in the exchange's format (e.g., BTC/USDT)
-        exchange_symbol = st.text_input("সিম্বল লিখুন (এক্সচেঞ্জের ফরম্যাটে, যেমন BTC/USDT):")
-        # Optional: we can also allow fetching current price and volume from the exchange
-        # For simplicity, we'll just fetch candles and use the latest price/volume
+        st.info("Using ccxt to fetch candlestick data directly from exchange.")
+        exchange_name = st.selectbox("Select exchange:", list(EXCHANGE_MAP.keys()))
+        exchange_symbol = st.text_input("Symbol (exchange format, e.g., BTC/USDT):")
         if exchange_symbol:
-            with st.spinner("ডাটা আনতে হচ্ছে..."):
-                # Fetch candles to get latest price and volume
+            with st.spinner("Fetching data..."):
                 price_series = get_candles_from_exchange(exchange_name, exchange_symbol, interval=interval, limit=100)
                 if price_series is not None and len(price_series) > 0:
                     current_price = price_series.iloc[-1]
-                    # Estimate volume from the last candle (if we had volume, we could use it)
-                    # For now, we set volume to a dummy value; we could fetch ticker too.
-                    # We'll also try to fetch ticker for better volume
                     try:
                         exchange_class = EXCHANGE_MAP[exchange_name]
                         exchange = exchange_class({'enableRateLimit': True})
@@ -435,7 +414,7 @@ with tabs[0]:
                         volume = ticker.get('quoteVolume', 0) or ticker.get('baseVolume', 0)
                         price_change = ticker.get('percentage', 0)
                     except Exception as e:
-                        st.warning(f"টিকার ডাটা আনতে সমস্যা: {e}")
+                        st.warning(f"Could not fetch ticker data: {e}")
                         volume = 0
                         price_change = 0
 
@@ -450,13 +429,13 @@ with tabs[0]:
                         exchange_symbol=exchange_symbol
                     )
                 else:
-                    st.error("এক্সচেঞ্জ থেকে ডাটা আনতে ব্যর্থ। সিম্বল ও ইন্টারভাল ঠিক আছে কিনা যাচাই করুন।")
+                    st.error("Failed to fetch data from exchange. Check symbol and interval.")
 
 with tabs[1]:
-    st.subheader("🚀 লঞ্চপ্যাডে নতুন কয়েন")
+    st.subheader("🚀 Trending Tokens (DexScreener)")
     coins = fetch_new_launchpad_coins()
     if coins:
-        for coin in coins[:5]:
+        for coin in coins:
             st.write(analyze_new_coin(coin))
     else:
-        st.info("কোন কয়েন পাওয়া যায়নি।")
+        st.info("No trending tokens found. Try again later.")
