@@ -38,7 +38,12 @@ from technicals import (
 )
 
 # Import honeypot checker
-from honeypot_checker.checker import check_honeypot, display_honeypot_result
+from honeypot_checker.checker import (
+    check_honeypot,
+    check_solana_token,
+    check_pumpfun_token,
+    display_honeypot_result
+)
 
 # ----------------------------------------------------------------------
 # Trending tokens (fixed)
@@ -492,18 +497,25 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader("🔍 Token Honeypot Checker")
-    st.markdown("Check if a token is a scam/honeypot using honeypot.is API.")
-    
-    token_address = st.text_input("Token Address (Ethereum, BSC, Base)")
-    chain_options = {
-        "Auto-detect": None,
-        "Ethereum (1)": 1,
-        "BSC (56)": 56,
-        "Base (8453)": 8453
-    }
-    chain = st.selectbox("Chain (optional)", list(chain_options.keys()))
-    
+    st.markdown("Check if a token is a scam/honeypot. Supports EVM (Ethereum, BSC, Base) and Solana (including pump.fun).")
+
+    chain = st.selectbox("Select Chain", ["EVM (Ethereum/BSC/Base)", "Solana (including pump.fun)"])
+    token_address = st.text_input("Token Address / Mint ID")
+
+    if chain == "EVM (Ethereum/BSC/Base)":
+        chain_options = {"Auto-detect": None, "Ethereum (1)": 1, "BSC (56)": 56, "Base (8453)": 8453}
+        chain_id = chain_options[st.selectbox("Chain ID (optional)", list(chain_options.keys()))]
+    else:
+        chain_id = None  # not used for Solana
+
     if st.button("Check Token") and token_address:
-        with st.spinner("Analyzing contract..."):
-            result = check_honeypot(token_address, chain_options[chain])
+        with st.spinner("Analyzing..."):
+            if chain.startswith("EVM"):
+                result = check_honeypot(token_address, chain_id)
+            else:
+                # Simple heuristic: if address length is 44 and starts with "pump", treat as pump.fun, else Solana
+                if len(token_address) == 44 and token_address.startswith("pump"):
+                    result = check_pumpfun_token(token_address)
+                else:
+                    result = check_solana_token(token_address)
             display_honeypot_result(result)
