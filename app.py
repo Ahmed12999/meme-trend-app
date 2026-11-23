@@ -1,686 +1,710 @@
 
-import math
-import time
 import streamlit as st
+import pandas as pd
+import requests
+import time
+import traceback
 
+from ai_logic import (
+    calculate_indicators,
+    calculate_ai_score,
+    detect_market_regime,
+    generate_ai_report,
+    detect_candlestick_patterns,
+    candlestick_volume_ai,
+    volume_spike_summary,
+    calculate_atr_risk,
+    calculate_support_resistance,
+    risk_signal,
+    analyze_new_coin,
+)
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
+from alerts import (
+    init_alerts,
+    add_alert,
+    check_alerts,
+    display_alerts,
+    display_alert_history,
+    clear_alerts,
+)
 
-DEFAULT_COOLDOWN = 300
-MAX_ALERT_HISTORY = 200
+from utils.exchange import (
+    EXCHANGE_MAP,
+    get_candles_from_exchange,
+)
 
+from utils.price_data import (
+    get_real_ohlcv,
+    get_price_series,
+)
 
-# =========================================================
-# INITIALIZE ALERT STORAGE
-# =========================================================
+from utils.trending import (
+    fetch_dexscreener_trending,
+    format_dexscreener_token,
+    simple_ai_for_token,
+    fetch_coingecko_trending,
+)
 
-def init_alerts():
-    if "crypto_alerts" not in st.session_state:
-        st.session_state.crypto_alerts = []
+from honeypot_checker.checker import (
+    check_honeypot,
+    check_solana_token,
+    check_pumpfun_token,
+    display_honeypot_result,
+)
 
-    if "alert_history" not in st.session_state:
-        st.session_state.alert_history = []
+# =====================================================
+# PAGE CONFIG
+# =====================================================
 
-    if "alert_last_triggered" not in st.session_state:
-        st.session_state.alert_last_triggered = {}
+st.set_page_config(
+    page_title="AI Crypto Advisor",
+    page_icon="🪙",
+    layout="wide",
+)
 
+st.title("🪙 মিম + মেইন কয়েন AI মার্কেট বিশ্লেষক")
+st.caption("Real Market Data | Technical Analysis | AI Signals")
 
-# =========================================================
-# SAFE VALUE CONVERSION
-# =========================================================
+init_alerts()
 
-def _safe_numeric(value):
+# =====================================================
+# HELPERS
+# =====================================================
+
+def safe_float(value, default=None):
     try:
         number = float(value)
-
-        if not math.isfinite(number):
-            return None
-
+        if pd.isna(number):
+            return default
         return number
-
     except (TypeError, ValueError):
+        return default
+
+
+def normalize_ohlcv(df):
+    if df is None or not isinstance(df, pd.DataFrame):
+        return None
+
+    required = [
+        "open", "high", "low", "close", "volume"
+    ]
+
+    if not all(col in df.columns for col in required):
+        return None
+
+    data = df.copy()
+
+    for col in required:
+        data[col] = pd.to_numeric(
+            data[col], errors="coerce"
+        )
+
+    data = data.dropna(subset=required)
+
+    data = data[
+        (data["high"] >= data["low"]) &
+        (data["volume"] >= 0) &
+        (data["close"] > 0)
+    ]
+
+    if len(data) < 20:
+        return None
+
+    return data.reset_index(drop=True)
+
+
+def fetch_real_ohlcv(exchange_name, symbol, interval, limit=200):
+    try:
+        return get_candles_from_exchange(
+            exchange_name=exchange_name,
+            symbol=symbol,
+            interval=interval,
+            limit=limit,
+            drop_incomplete=True,
+            show_warnings=False,
+        )
+    except Exception as e:
+        st.warning(f"Exchange data error: {e}")
         return None
 
 
-def _normalize_text(value):
-    if value is None:
-        return ""
-
-    return str(value).strip().upper()
-
-
-def _get_alerts():
-    init_alerts()
-    return st.session_state.crypto_alerts
+def get_signal_color(direction):
+    if direction == "BULLISH":
+        return "🟢"
+    if direction == "BEARISH":
+        return "🔴"
+    return "🟡"
 
 
-# =========================================================
-# ADD ALERT
-# =========================================================
+# =====================================================
+# COIN ANALYSIS
+# =====================================================
 
-def add_alert(
-    symbol,
-    alert_type,
-    target_value=None,
-    condition="above",
-    message=None,
-    enabled=True,
-    cooldown=DEFAULT_COOLDOWN
-):
-    """
-    Create a new alert.
+def analyze_coin(symbol, exchange_name, interval):
+    st.subheader(f"📊 {symbol} Market Analysis")
 
-    Supported alert types:
-    price, rsi, volume, pattern, macd, ai_score, direction
-    """
-
-    init_alerts()
-
-    symbol = _normalize_text(symbol)
-    alert_type = _normalize_text(alert_type)
-    condition = _normalize_text(condition)
-
-    allowed_types = {
-        "PRICE",
-        "RSI",
-        "VOLUME",
-        "PATTERN",
-        "MACD",
-        "AI_SCORE",
-        "DIRECTION"
-    }
-
-    if not symbol:
-        return False
-
-    if alert_type not in allowed_types:
-        return False
-
-    if alert_type in {
-        "PRICE",
-        "RSI",
-        "VOLUME",
-        "AI_SCORE"
-    }:
-        target_value = _safe_numeric(target_value)
-
-        if target_value is None:
-            return False
-
-    alert_id = int(time.time() * 1000000)
-
-    alert = {
-        "id": alert_id,
-        "symbol": symbol,
-        "type": alert_type,
-        "target": target_value,
-        "condition": condition,
-        "message": message or "",
-        "enabled": bool(enabled),
-        "cooldown": max(0, int(cooldown)),
-        "created_at": time.time()
-    }
-
-    st.session_state.crypto_alerts.append(alert)
-
-    return True
-
-
-# =========================================================
-# ALERT CONDITION EVALUATION
-# =========================================================
-
-def _evaluate_condition(
-    current_value,
-    target_value,
-    condition
-):
-    current = _safe_numeric(current_value)
-    target = _safe_numeric(target_value)
-
-    if current is None or target is None:
-        return False
-
-    condition = _normalize_text(condition)
-
-    if condition in ("ABOVE", "GREATER", ">"):
-        return current > target
-
-    if condition in ("BELOW", "LESS", "<"):
-        return current < target
-
-    if condition in ("EQUAL", "=", "=="):
-        return math.isclose(
-            current,
-            target,
-            rel_tol=1e-9,
-            abs_tol=1e-9
+    with st.spinner("Real market data সংগ্রহ করা হচ্ছে..."):
+        df = fetch_real_ohlcv(
+            exchange_name,
+            symbol,
+            interval,
+            limit=300,
         )
 
-    if condition in ("CROSSES ABOVE", "CROSS_ABOVE"):
-        # Requires previous value and is evaluated separately.
-        return False
+    df = normalize_ohlcv(df)
 
-    if condition in ("CROSSES BELOW", "CROSS_BELOW"):
-        return False
-
-    return False
-
-
-# =========================================================
-# HISTORY
-# =========================================================
-
-def _record_history(
-    alert,
-    current_value,
-    message,
-    triggered=True
-):
-    init_alerts()
-
-    history_item = {
-        "time": time.time(),
-        "symbol": alert.get("symbol"),
-        "type": alert.get("type"),
-        "value": current_value,
-        "message": message,
-        "triggered": bool(triggered)
-    }
-
-    history = st.session_state.alert_history
-
-    history.append(history_item)
-
-    if len(history) > MAX_ALERT_HISTORY:
-        st.session_state.alert_history = history[
-            -MAX_ALERT_HISTORY:
-        ]
-
-
-# =========================================================
-# TRIGGER ALERT
-# =========================================================
-
-def _trigger_alert(
-    alert,
-    current_value,
-    message=None
-):
-    init_alerts()
-
-    alert_id = alert.get("id")
-    now = time.time()
-
-    last_triggered = st.session_state.alert_last_triggered.get(
-        alert_id, 0
-    )
-
-    cooldown = max(
-        0,
-        int(alert.get("cooldown", DEFAULT_COOLDOWN))
-    )
-
-    if now - last_triggered < cooldown:
-        return False
-
-    alert_message = (
-        message
-        or alert.get("message")
-        or (
-            f"{alert.get('symbol')} "
-            f"{alert.get('type')} alert triggered"
+    if df is None:
+        st.error(
+            "পর্যাপ্ত Real OHLCV data পাওয়া যায়নি। "
+            "Symbol, Exchange অথবা timeframe পরীক্ষা করো।"
         )
-    )
-
-    st.session_state.alert_last_triggered[alert_id] = now
-
-    _record_history(
-        alert,
-        current_value,
-        alert_message,
-        triggered=True
-    )
-
-    # Streamlit notification
-    try:
-        st.toast(f"🔔 {alert_message}", icon="🔔")
-    except Exception:
-        pass
-
-    return True
-
-
-# =========================================================
-# ALERT CHECKER
-# =========================================================
-
-def check_alerts(
-    symbol,
-    current_price,
-    rsi=None,
-    volume=None,
-    pattern=None,
-    volume_ratio=None,
-    macd_cross=None,
-    ai_score=None,
-    direction=None,
-    change_percent=None,
-    previous_price=None,
-    previous_rsi=None
-):
-    """
-    Check all enabled alerts for a symbol.
-
-    Backward compatible with:
-    check_alerts(symbol, price, rsi, volume, pattern)
-
-    Additional optional parameters support advanced alerts.
-    """
-
-    init_alerts()
-
-    symbol = _normalize_text(symbol)
-
-    if not symbol:
-        return []
-
-    current_price = _safe_numeric(current_price)
-    rsi = _safe_numeric(rsi)
-    volume = _safe_numeric(volume)
-    volume_ratio = _safe_numeric(volume_ratio)
-    ai_score = _safe_numeric(ai_score)
-    change_percent = _safe_numeric(change_percent)
-
-    previous_price = _safe_numeric(previous_price)
-    previous_rsi = _safe_numeric(previous_rsi)
-
-    pattern = _normalize_text(pattern)
-    macd_cross = _normalize_text(macd_cross)
-    direction = _normalize_text(direction)
-
-    triggered_alerts = []
-
-    for alert in _get_alerts():
-
-        if not alert.get("enabled", True):
-            continue
-
-        if _normalize_text(alert.get("symbol")) != symbol:
-            continue
-
-        alert_type = _normalize_text(alert.get("type"))
-        target = alert.get("target")
-        condition = alert.get("condition", "above")
-
-        triggered = False
-        current_value = None
-        message = None
-
-        # -----------------------------
-        # PRICE ALERT
-        # -----------------------------
-
-        if alert_type == "PRICE":
-
-            current_value = current_price
-
-            if current_price is None:
-                continue
-
-            if str(condition).upper() in (
-                "CROSSES ABOVE",
-                "CROSS_ABOVE"
-            ):
-                triggered = (
-                    previous_price is not None
-                    and current_price > target
-                    and previous_price <= target
-                )
-
-            elif str(condition).upper() in (
-                "CROSSES BELOW",
-                "CROSS_BELOW"
-            ):
-                triggered = (
-                    previous_price is not None
-                    and current_price < target
-                    and previous_price >= target
-                )
-
-            else:
-                triggered = _evaluate_condition(
-                    current_price,
-                    target,
-                    condition
-                )
-
-            message = (
-                f"{symbol}: Price is now {current_price}"
-                f" (Target: {target})"
-            )
-
-        # -----------------------------
-        # RSI ALERT
-        # -----------------------------
-
-        elif alert_type == "RSI":
-
-            current_value = rsi
-
-            if rsi is None:
-                continue
-
-            if str(condition).upper() in (
-                "CROSSES ABOVE",
-                "CROSS_ABOVE"
-            ):
-                triggered = (
-                    previous_rsi is not None
-                    and rsi > target
-                    and previous_rsi <= target
-                )
-
-            elif str(condition).upper() in (
-                "CROSSES BELOW",
-                "CROSS_BELOW"
-            ):
-                triggered = (
-                    previous_rsi is not None
-                    and rsi < target
-                    and previous_rsi >= target
-                )
-
-            else:
-                triggered = _evaluate_condition(
-                    rsi,
-                    target,
-                    condition
-                )
-
-            message = (
-                f"{symbol}: RSI is {rsi:.2f}"
-                f" (Target: {target})"
-            )
-
-        # -----------------------------
-        # VOLUME ALERT
-        # -----------------------------
-
-        elif alert_type == "VOLUME":
-
-            # If target exists, compare volume ratio when available.
-            # Otherwise use the provided volume value.
-            current_value = (
-                volume_ratio
-                if volume_ratio is not None
-                else volume
-            )
-
-            if current_value is None:
-                continue
-
-            triggered = _evaluate_condition(
-                current_value,
-                target,
-                condition
-            )
-
-            message = (
-                f"{symbol}: Volume metric is {current_value:.2f}"
-                f" (Target: {target})"
-            )
-
-        # -----------------------------
-        # PATTERN ALERT
-        # -----------------------------
-
-        elif alert_type == "PATTERN":
-
-            current_value = pattern
-
-            if not pattern:
-                continue
-
-            expected = _normalize_text(
-                alert.get("message") or target
-            )
-
-            if expected:
-                triggered = expected == pattern
-            else:
-                triggered = bool(pattern) and pattern != "NO PATTERN"
-
-            message = (
-                f"{symbol}: Candlestick pattern detected: {pattern}"
-            )
-
-        # -----------------------------
-        # MACD ALERT
-        # -----------------------------
-
-        elif alert_type == "MACD":
-
-            current_value = macd_cross
-
-            if not macd_cross:
-                continue
-
-            if condition in ("BULLISH", "BULLISH CROSS"):
-                triggered = "BULLISH" in macd_cross
-
-            elif condition in ("BEARISH", "BEARISH CROSS"):
-                triggered = "BEARISH" in macd_cross
-
-            else:
-                expected = _normalize_text(
-                    alert.get("message") or target
-                )
-                triggered = (
-                    macd_cross == expected
-                    if expected
-                    else False
-                )
-
-            message = (
-                f"{symbol}: MACD signal: {macd_cross}"
-            )
-
-        # -----------------------------
-        # AI SCORE ALERT
-        # -----------------------------
-
-        elif alert_type == "AI_SCORE":
-
-            current_value = ai_score
-
-            if ai_score is None:
-                continue
-
-            triggered = _evaluate_condition(
-                ai_score,
-                target,
-                condition
-            )
-
-            message = (
-                f"{symbol}: AI Score is {ai_score:.2f}"
-                f" (Target: {target})"
-            )
-
-        # -----------------------------
-        # DIRECTION ALERT
-        # -----------------------------
-
-        elif alert_type == "DIRECTION":
-
-            current_value = direction
-
-            if not direction:
-                continue
-
-            expected = _normalize_text(
-                alert.get("message") or target
-            )
-
-            if expected:
-                triggered = direction == expected
-
-            message = (
-                f"{symbol}: Market direction is {direction}"
-            )
-
-        if triggered:
-            if _trigger_alert(
-                alert,
-                current_value,
-                message
-            ):
-                triggered_alerts.append(alert)
-
-    return triggered_alerts
-
-
-# =========================================================
-# DISPLAY ALERTS
-# =========================================================
-
-def display_alerts():
-    init_alerts()
-
-    alerts = _get_alerts()
-
-    st.subheader("🔔 Active Alerts")
-
-    if not alerts:
-        st.info("এখনো কোনো Alert তৈরি করা হয়নি।")
         return
 
-    for alert in alerts:
+    current_price = safe_float(df["close"].iloc[-1])
+    previous_price = safe_float(df["close"].iloc[-2])
 
-        status = (
-            "🟢 Active"
-            if alert.get("enabled", True)
-            else "⚪ Disabled"
-        )
+    if not current_price:
+        st.error("Current price পাওয়া যায়নি।")
+        return
 
-        alert_type = alert.get("type", "")
-        symbol = alert.get("symbol", "")
+    price_change = (
+        (current_price - previous_price) /
+        previous_price * 100
+        if previous_price else 0
+    )
 
-        target = alert.get("target")
+    # -------------------------------------------------
+    # AI ENGINE
+    # -------------------------------------------------
 
-        if target is not None:
-            description = (
-                f"{symbol} | {alert_type} | "
-                f"{alert.get('condition')} {target}"
+    indicators = calculate_indicators(df)
+
+    if indicators is None:
+        st.error("Technical indicators তৈরি করা যায়নি।")
+        return
+
+    ai_result = calculate_ai_score(
+        df,
+        indicators=indicators,
+    )
+
+    if not isinstance(ai_result, dict):
+        st.error("AI analysis result invalid.")
+        return
+
+    score = safe_float(ai_result.get("score"), 50)
+    direction = ai_result.get("direction", "NEUTRAL")
+    confidence = safe_float(
+        ai_result.get("confidence"), 0
+    )
+    coverage = safe_float(
+        ai_result.get("coverage"), 0
+    )
+
+    regime = detect_market_regime(
+        df,
+        indicators=indicators,
+    )
+
+    report = generate_ai_report(
+        df,
+        result=ai_result,
+    )
+
+    # -------------------------------------------------
+    # CURRENT MARKET
+    # -------------------------------------------------
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Current Price",
+        f"{current_price:.8g}",
+        f"{price_change:.2f}%",
+    )
+
+    col2.metric(
+        "AI Score",
+        f"{score:.1f}/100",
+    )
+
+    col3.metric(
+        "Confidence",
+        f"{confidence:.1f}%",
+    )
+
+    col4.metric(
+        "Market Direction",
+        direction,
+    )
+
+    st.divider()
+
+    # -------------------------------------------------
+    # TECHNICAL INDICATORS
+    # -------------------------------------------------
+
+    st.subheader("📈 Technical Indicators")
+
+    latest = indicators.iloc[-1]
+
+    rsi = safe_float(latest.get("rsi"))
+    ema20 = safe_float(latest.get("ema20"))
+    ema50 = safe_float(latest.get("ema50"))
+    ema200 = safe_float(latest.get("ema200"))
+    macd = safe_float(latest.get("macd"))
+    macd_signal = safe_float(
+        latest.get("macd_signal")
+    )
+    atr = safe_float(latest.get("atr"))
+    volume_ratio = safe_float(
+        latest.get("volume_ratio")
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "RSI",
+        f"{rsi:.2f}" if rsi is not None else "N/A",
+    )
+
+    c2.metric(
+        "EMA 20",
+        f"{ema20:.8g}" if ema20 is not None else "N/A",
+    )
+
+    c3.metric(
+        "EMA 50",
+        f"{ema50:.8g}" if ema50 is not None else "N/A",
+    )
+
+    c4.metric(
+        "EMA 200",
+        f"{ema200:.8g}" if ema200 is not None else "N/A",
+    )
+
+    c5, c6, c7, c8 = st.columns(4)
+
+    c5.metric(
+        "MACD",
+        f"{macd:.6f}" if macd is not None else "N/A",
+    )
+
+    c6.metric(
+        "MACD Signal",
+        f"{macd_signal:.6f}"
+        if macd_signal is not None else "N/A",
+    )
+
+    c7.metric(
+        "ATR",
+        f"{atr:.8g}" if atr is not None else "N/A",
+    )
+
+    c8.metric(
+        "Volume Ratio",
+        f"{volume_ratio:.2f}x"
+        if volume_ratio is not None else "N/A",
+    )
+
+    # -------------------------------------------------
+    # MARKET REGIME
+    # -------------------------------------------------
+
+    st.subheader("🌐 Market Regime")
+    st.write(regime)
+
+    # -------------------------------------------------
+    # CANDLESTICK PATTERNS
+    # -------------------------------------------------
+
+    st.subheader("🕯️ Candlestick Analysis")
+
+    patterns = detect_candlestick_patterns(df)
+
+    if patterns:
+        st.write(patterns)
+    else:
+        st.info("বর্তমান candle-এ উল্লেখযোগ্য pattern পাওয়া যায়নি।")
+
+    candle_ai = candlestick_volume_ai(df)
+
+    if candle_ai:
+        st.write(candle_ai)
+
+    # -------------------------------------------------
+    # VOLUME ANALYSIS
+    # -------------------------------------------------
+
+    st.subheader("📊 Volume Analysis")
+
+    volume_summary = volume_spike_summary(df)
+
+    if volume_summary:
+        st.write(volume_summary)
+
+    if volume_ratio is not None:
+        if volume_ratio >= 2:
+            st.success(
+                f"Volume spike: স্বাভাবিকের তুলনায় "
+                f"{volume_ratio:.2f} গুণ"
             )
         else:
-            description = (
-                f"{symbol} | {alert_type}"
+            st.info(
+                f"Volume ratio: {volume_ratio:.2f}x"
             )
 
-        with st.container(border=True):
-            col1, col2 = st.columns([4, 1])
+    # -------------------------------------------------
+    # SUPPORT AND RESISTANCE
+    # -------------------------------------------------
 
-            with col1:
-                st.write(description)
-                st.caption(status)
+    st.subheader("🎯 Support & Resistance")
 
-            with col2:
-                if st.button(
-                    "❌",
-                    key=f"remove_alert_{alert['id']}"
-                ):
-                    remove_alert(alert["id"])
-                    st.rerun()
+    levels = calculate_support_resistance(df)
 
+    if levels:
+        st.write(levels)
 
-# =========================================================
-# DISPLAY ALERT HISTORY
-# =========================================================
+    # -------------------------------------------------
+    # RISK MANAGEMENT
+    # -------------------------------------------------
 
-def display_alert_history():
-    init_alerts()
+    st.subheader("⚠️ Risk Analysis")
 
-    st.subheader("📜 Alert History")
+    if atr is not None and atr > 0:
+        atr_percent = (atr / current_price) * 100
 
-    history = st.session_state.alert_history
-
-    if not history:
-        st.info("এখনো কোনো Alert Trigger হয়নি।")
-        return
-
-    for item in reversed(history[-30:]):
-
-        event_time = time.strftime(
-            "%Y-%m-%d %H:%M:%S",
-            time.localtime(item["time"])
+        st.metric(
+            "ATR Risk %",
+            f"{atr_percent:.2f}%",
         )
 
-        st.write(
-            f"🔔 **{item['symbol']}** — "
-            f"{item['message']}"
+    st.caption(
+        "Risk levels are estimates, not guaranteed future prices."
+    )
+
+    # -------------------------------------------------
+    # AI REPORT
+    # -------------------------------------------------
+
+    st.subheader("🤖 AI Market Report")
+
+    if report:
+        st.write(report)
+
+    st.write(
+        f"{get_signal_color(direction)} "
+        f"**AI Direction: {direction}**"
+    )
+
+    st.write(
+        f"AI Signal Coverage: {coverage:.1f}%"
+    )
+
+    # -------------------------------------------------
+    # ALERT CHECK
+    # -------------------------------------------------
+
+    previous_rsi = None
+
+    if len(indicators) > 1:
+        previous_rsi = safe_float(
+            indicators.iloc[-2].get("rsi")
         )
 
-        st.caption(event_time)
+    macd_cross = None
 
+    if macd is not None and macd_signal is not None:
+        if macd > macd_signal:
+            macd_cross = "BULLISH"
+        elif macd < macd_signal:
+            macd_cross = "BEARISH"
 
-# =========================================================
-# REMOVE ALERT
-# =========================================================
+    check_alerts(
+        symbol=symbol,
+        current_price=current_price,
+        rsi=rsi,
+        volume=safe_float(df["volume"].iloc[-1]),
+        pattern=str(patterns) if patterns else None,
+        volume_ratio=volume_ratio,
+        macd_cross=macd_cross,
+        ai_score=score,
+        direction=direction,
+        change_percent=price_change,
+        previous_price=previous_price,
+        previous_rsi=previous_rsi,
+    )
 
-def remove_alert(alert_id):
-    init_alerts()
+    # -------------------------------------------------
+    # CHART
+    # -------------------------------------------------
 
-    st.session_state.crypto_alerts = [
-        alert
-        for alert in st.session_state.crypto_alerts
-        if alert.get("id") != alert_id
-    ]
+    st.subheader("📉 Price Chart")
 
-    st.session_state.alert_last_triggered.pop(
-        alert_id, None
+    chart_data = df.copy()
+
+    if "timestamp" in chart_data.columns:
+        chart_data = chart_data.set_index("timestamp")
+
+    st.line_chart(chart_data["close"])
+
+    st.subheader("📋 Recent OHLCV Data")
+    st.dataframe(
+        df.tail(20),
+        use_container_width=True,
     )
 
 
-# =========================================================
-# CLEAR ALERTS
-# =========================================================
+# =====================================================
+# SIDEBAR
+# =====================================================
 
-def clear_alerts():
-    init_alerts()
+with st.sidebar:
+    st.header("⚙️ Settings")
 
-    st.session_state.crypto_alerts = []
-    st.session_state.alert_last_triggered = {}
+    selected_exchange = st.selectbox(
+        "Exchange",
+        list(EXCHANGE_MAP.keys()),
+        index=0,
+    )
+
+    interval = st.selectbox(
+        "Timeframe",
+        [
+            "1m", "3m", "5m", "10m",
+            "15m", "30m", "1h",
+            "2h", "4h", "1d",
+        ],
+        index=2,
+    )
+
+    st.divider()
+
+    st.subheader("🔔 Create Alert")
+
+    alert_symbol = st.text_input(
+        "Symbol",
+        value="BTC/USDT",
+    ).strip().upper()
+
+    alert_type = st.selectbox(
+        "Alert Type",
+        [
+            "PRICE",
+            "RSI",
+            "VOLUME",
+            "AI_SCORE",
+            "PATTERN",
+            "MACD",
+            "DIRECTION",
+        ],
+    )
+
+    alert_condition = st.selectbox(
+        "Condition",
+        [
+            "above",
+            "below",
+            "BULLISH",
+            "BEARISH",
+        ],
+    )
+
+    alert_target = st.number_input(
+        "Target Value",
+        value=0.0,
+    )
+
+    if st.button("➕ Add Alert", use_container_width=True):
+        created = add_alert(
+            symbol=alert_symbol,
+            alert_type=alert_type,
+            target_value=(
+                alert_target
+                if alert_type in [
+                    "PRICE", "RSI", "VOLUME", "AI_SCORE"
+                ]
+                else None
+            ),
+            condition=alert_condition,
+        )
+
+        if created:
+            st.success("Alert তৈরি হয়েছে।")
+        else:
+            st.error("Alert তৈরি করা যায়নি।")
+
+    if st.button("🗑️ Clear All Alerts"):
+        clear_alerts()
+        st.success("সব Alert মুছে দেওয়া হয়েছে।")
 
 
-# =========================================================
-# CLEAR HISTORY
-# =========================================================
+# =====================================================
+# MAIN TABS
+# =====================================================
 
-def clear_alert_history():
-    init_alerts()
+tab1, tab2, tab3, tab4 = st.tabs(
+    [
+        "📊 Analysis",
+        "🔥 Trending Tokens",
+        "🛡️ Honeypot Checker",
+        "🔔 Alerts",
+    ]
+)
 
-    st.session_state.alert_history = []
 
+# =====================================================
+# TAB 1: ANALYSIS
+# =====================================================
 
-# =========================================================
-# RESET ALERT
-# =========================================================
+with tab1:
+    st.subheader("🔎 Select Coin")
 
-def reset_alert(alert_id):
-    init_alerts()
+    symbol = st.text_input(
+        "Trading Pair",
+        value="BTC/USDT",
+        help="উদাহরণ: BTC/USDT, ETH/USDT, SOL/USDT",
+    ).strip().upper()
 
-    for alert in st.session_state.crypto_alerts:
-        if alert.get("id") == alert_id:
-            alert["enabled"] = True
-
-            st.session_state.alert_last_triggered.pop(
-                alert_id, None
+    if st.button(
+        "🚀 Analyze Market",
+        type="primary",
+        use_container_width=True,
+    ):
+        if "/" not in symbol:
+            st.error(
+                "সঠিক Trading Pair লিখো। যেমন BTC/USDT"
+            )
+        else:
+            analyze_coin(
+                symbol,
+                selected_exchange,
+                interval,
             )
 
-            return True
 
-    return False
+# =====================================================
+# TAB 2: TRENDING TOKENS
+# =====================================================
+
+with tab2:
+    st.subheader("🔥 Trending Crypto Tokens")
+
+    trend_source = st.radio(
+        "Trending Source",
+        [
+            "DexScreener",
+            "CoinGecko",
+        ],
+        horizontal=True,
+    )
+
+    if st.button(
+        "🔄 Refresh Trending",
+        use_container_width=True,
+    ):
+        st.cache_data.clear()
+
+    try:
+        if trend_source == "DexScreener":
+            trending = fetch_dexscreener_trending()
+
+        else:
+            trending = fetch_coingecko_trending()
+
+        if trending is None or len(trending) == 0:
+            st.info("Trending data পাওয়া যায়নি।")
+        else:
+            for token in trending:
+                st.write("---")
+                st.write(token)
+
+    except Exception as e:
+        st.error(f"Trending error: {e}")
+
+
+# =====================================================
+# TAB 3: HONEYPOT CHECKER
+# =====================================================
+
+with tab3:
+    st.subheader("🛡️ Token Safety Checker")
+
+    network = st.selectbox(
+        "Network",
+        [
+            "Ethereum",
+            "BSC",
+            "Base",
+            "Solana",
+            "Pump.fun",
+        ],
+    )
+
+    token_address = st.text_input(
+        "Token Contract Address",
+        placeholder="Paste token address here",
+    ).strip()
+
+    if st.button(
+        "🔍 Check Token Safety",
+        use_container_width=True,
+    ):
+        if not token_address:
+            st.warning("Token address লিখো।")
+
+        else:
+            try:
+                with st.spinner("Token পরীক্ষা করা হচ্ছে..."):
+
+                    if network in [
+                        "Ethereum", "BSC", "Base"
+                    ]:
+                        result = check_honeypot(
+                            token_address,
+                            network.lower(),
+                        )
+
+                    elif network == "Solana":
+                        result = check_solana_token(
+                            token_address
+                        )
+
+                    else:
+                        result = check_pumpfun_token(
+                            token_address
+                        )
+
+                display_honeypot_result(result)
+
+            except Exception as e:
+                st.error(
+                    f"Safety check error: {e}"
+                )
+
+
+# =====================================================
+# TAB 4: ALERTS
+# =====================================================
+
+with tab4:
+    st.subheader("🔔 Alert Dashboard")
+
+    display_alerts()
+
+    st.divider()
+
+    display_alert_history()
+
+
+# =====================================================
+# FOOTER
+# =====================================================
+
+st.divider()
+
+st.caption(
+    "⚠️ AI analysis is informational only. "
+    "Crypto markets are volatile. "
+    "Always verify signals and manage your own risk."
+)
