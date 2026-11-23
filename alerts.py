@@ -1,537 +1,686 @@
-# ============================================================
-# SMART CRYPTO ALERT ENGINE
-# Upgraded alert system with conditions, cooldown and history
-# ============================================================
 
-import streamlit as st
+import math
 import time
+import streamlit as st
 
 
-# ============================================================
-# INITIALIZATION
-# ============================================================
+# =========================================================
+# CONFIGURATION
+# =========================================================
+
+DEFAULT_COOLDOWN = 300
+MAX_ALERT_HISTORY = 200
+
+
+# =========================================================
+# INITIALIZE ALERT STORAGE
+# =========================================================
 
 def init_alerts():
-
-    if "alerts" not in st.session_state:
-        st.session_state.alerts = []
+    if "crypto_alerts" not in st.session_state:
+        st.session_state.crypto_alerts = []
 
     if "alert_history" not in st.session_state:
         st.session_state.alert_history = []
 
-    if "alert_last_scan" not in st.session_state:
-        st.session_state.alert_last_scan = {}
+    if "alert_last_triggered" not in st.session_state:
+        st.session_state.alert_last_triggered = {}
 
 
-# ============================================================
-# ALERT CREATION
-# ============================================================
+# =========================================================
+# SAFE VALUE CONVERSION
+# =========================================================
+
+def _safe_numeric(value):
+    try:
+        number = float(value)
+
+        if not math.isfinite(number):
+            return None
+
+        return number
+
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_text(value):
+    if value is None:
+        return ""
+
+    return str(value).strip().upper()
+
+
+def _get_alerts():
+    init_alerts()
+    return st.session_state.crypto_alerts
+
+
+# =========================================================
+# ADD ALERT
+# =========================================================
 
 def add_alert(
-    alert_type,
     symbol,
-    condition_value,
-    current_value=None,
-    message="",
-    operator="above",
-    repeat=False,
-    cooldown=300
+    alert_type,
+    target_value=None,
+    condition="above",
+    message=None,
+    enabled=True,
+    cooldown=DEFAULT_COOLDOWN
 ):
+    """
+    Create a new alert.
+
+    Supported alert types:
+    price, rsi, volume, pattern, macd, ai_score, direction
+    """
 
     init_alerts()
 
-    alert_type = str(alert_type).lower().strip()
-    symbol = str(symbol).upper().strip()
+    symbol = _normalize_text(symbol)
+    alert_type = _normalize_text(alert_type)
+    condition = _normalize_text(condition)
 
-    valid_types = [
-        "price",
-        "rsi",
-        "volume",
-        "pattern",
-        "macd",
-        "ai_score",
-        "direction"
-    ]
-
-    if alert_type not in valid_types:
-        return False
-
-    alert = {
-        "id": int(time.time() * 1000000),
-        "type": alert_type,
-        "symbol": symbol,
-        "condition": condition_value,
-        "current": current_value,
-        "message": message,
-        "operator": operator.lower().strip(),
-        "triggered": False,
-        "repeat": bool(repeat),
-        "cooldown": max(0, int(cooldown)),
-        "last_triggered_at": 0,
-        "triggered_count": 0,
-        "created_at": time.time(),
-        "previous_value": None
+    allowed_types = {
+        "PRICE",
+        "RSI",
+        "VOLUME",
+        "PATTERN",
+        "MACD",
+        "AI_SCORE",
+        "DIRECTION"
     }
 
-    st.session_state.alerts.append(alert)
+    if not symbol:
+        return False
+
+    if alert_type not in allowed_types:
+        return False
+
+    if alert_type in {
+        "PRICE",
+        "RSI",
+        "VOLUME",
+        "AI_SCORE"
+    }:
+        target_value = _safe_numeric(target_value)
+
+        if target_value is None:
+            return False
+
+    alert_id = int(time.time() * 1000000)
+
+    alert = {
+        "id": alert_id,
+        "symbol": symbol,
+        "type": alert_type,
+        "target": target_value,
+        "condition": condition,
+        "message": message or "",
+        "enabled": bool(enabled),
+        "cooldown": max(0, int(cooldown)),
+        "created_at": time.time()
+    }
+
+    st.session_state.crypto_alerts.append(alert)
 
     return True
 
 
-# ============================================================
-# CONDITION EVALUATOR
-# ============================================================
+# =========================================================
+# ALERT CONDITION EVALUATION
+# =========================================================
 
 def _evaluate_condition(
-    value,
-    condition,
-    operator,
-    previous_value=None
+    current_value,
+    target_value,
+    condition
 ):
+    current = _safe_numeric(current_value)
+    target = _safe_numeric(target_value)
 
-    if value is None or condition is None:
+    if current is None or target is None:
         return False
 
-    try:
+    condition = _normalize_text(condition)
 
-        value = float(value)
-        condition = float(condition)
+    if condition in ("ABOVE", "GREATER", ">"):
+        return current > target
 
-        if operator == "above":
-            return value >= condition
+    if condition in ("BELOW", "LESS", "<"):
+        return current < target
 
-        elif operator == "below":
-            return value <= condition
+    if condition in ("EQUAL", "=", "=="):
+        return math.isclose(
+            current,
+            target,
+            rel_tol=1e-9,
+            abs_tol=1e-9
+        )
 
-        elif operator == "equal":
-            return value == condition
+    if condition in ("CROSSES ABOVE", "CROSS_ABOVE"):
+        # Requires previous value and is evaluated separately.
+        return False
 
-        elif operator == "cross_above":
-
-            return (
-                previous_value is not None
-                and previous_value < condition
-                and value >= condition
-            )
-
-        elif operator == "cross_below":
-
-            return (
-                previous_value is not None
-                and previous_value > condition
-                and value <= condition
-            )
-
-        elif operator == "change_percent":
-
-            if previous_value is None or previous_value == 0:
-                return False
-
-            change = (
-                (value - previous_value)
-                / previous_value
-            ) * 100
-
-            return abs(change) >= abs(condition)
-
-    except (ValueError, TypeError):
+    if condition in ("CROSSES BELOW", "CROSS_BELOW"):
         return False
 
     return False
 
 
-# ============================================================
-# ALERT HISTORY
-# ============================================================
+# =========================================================
+# HISTORY
+# =========================================================
 
-def _record_history(alert, message, current_value):
-
+def _record_history(
+    alert,
+    current_value,
+    message,
+    triggered=True
+):
     init_alerts()
 
-    record = {
-        "symbol": alert["symbol"],
-        "type": alert["type"],
-        "condition": alert["condition"],
-        "operator": alert["operator"],
-        "current": current_value,
+    history_item = {
+        "time": time.time(),
+        "symbol": alert.get("symbol"),
+        "type": alert.get("type"),
+        "value": current_value,
         "message": message,
-        "time": time.time()
+        "triggered": bool(triggered)
     }
 
-    st.session_state.alert_history.insert(0, record)
+    history = st.session_state.alert_history
 
-    # Keep only the latest 200 records
-    st.session_state.alert_history = (
-        st.session_state.alert_history[:200]
-    )
+    history.append(history_item)
+
+    if len(history) > MAX_ALERT_HISTORY:
+        st.session_state.alert_history = history[
+            -MAX_ALERT_HISTORY:
+        ]
 
 
-# ============================================================
-# TRIGGER HANDLER
-# ============================================================
+# =========================================================
+# TRIGGER ALERT
+# =========================================================
 
-def _trigger_alert(alert, current_value, message):
+def _trigger_alert(
+    alert,
+    current_value,
+    message=None
+):
+    init_alerts()
 
+    alert_id = alert.get("id")
     now = time.time()
 
-    alert["triggered"] = True
-    alert["last_triggered_at"] = now
-    alert["triggered_count"] += 1
+    last_triggered = st.session_state.alert_last_triggered.get(
+        alert_id, 0
+    )
 
-    alert["current"] = current_value
+    cooldown = max(
+        0,
+        int(alert.get("cooldown", DEFAULT_COOLDOWN))
+    )
 
-    _record_history(alert, message, current_value)
+    if now - last_triggered < cooldown:
+        return False
 
-    return message
+    alert_message = (
+        message
+        or alert.get("message")
+        or (
+            f"{alert.get('symbol')} "
+            f"{alert.get('type')} alert triggered"
+        )
+    )
+
+    st.session_state.alert_last_triggered[alert_id] = now
+
+    _record_history(
+        alert,
+        current_value,
+        alert_message,
+        triggered=True
+    )
+
+    # Streamlit notification
+    try:
+        st.toast(f"🔔 {alert_message}", icon="🔔")
+    except Exception:
+        pass
+
+    return True
 
 
-# ============================================================
-# CHECK ALERTS
-# ============================================================
+# =========================================================
+# ALERT CHECKER
+# =========================================================
 
 def check_alerts(
     symbol,
-    price,
+    current_price,
     rsi=None,
     volume=None,
     pattern=None,
     volume_ratio=None,
     macd_cross=None,
     ai_score=None,
-    direction=None
+    direction=None,
+    change_percent=None,
+    previous_price=None,
+    previous_rsi=None
 ):
+    """
+    Check all enabled alerts for a symbol.
+
+    Backward compatible with:
+    check_alerts(symbol, price, rsi, volume, pattern)
+
+    Additional optional parameters support advanced alerts.
+    """
 
     init_alerts()
 
-    symbol = str(symbol).upper().strip()
+    symbol = _normalize_text(symbol)
 
-    price = _safe_numeric(price)
+    if not symbol:
+        return []
+
+    current_price = _safe_numeric(current_price)
     rsi = _safe_numeric(rsi)
     volume = _safe_numeric(volume)
     volume_ratio = _safe_numeric(volume_ratio)
     ai_score = _safe_numeric(ai_score)
+    change_percent = _safe_numeric(change_percent)
 
-    triggered = []
+    previous_price = _safe_numeric(previous_price)
+    previous_rsi = _safe_numeric(previous_rsi)
 
-    now = time.time()
+    pattern = _normalize_text(pattern)
+    macd_cross = _normalize_text(macd_cross)
+    direction = _normalize_text(direction)
 
-    for alert in st.session_state.alerts:
+    triggered_alerts = []
 
-        if alert["symbol"] != symbol:
+    for alert in _get_alerts():
+
+        if not alert.get("enabled", True):
             continue
 
-        # Non-repeat alerts stop after first trigger
-        if alert["triggered"] and not alert["repeat"]:
+        if _normalize_text(alert.get("symbol")) != symbol:
             continue
 
-        # Repeat cooldown
-        if alert["triggered"] and alert["repeat"]:
+        alert_type = _normalize_text(alert.get("type"))
+        target = alert.get("target")
+        condition = alert.get("condition", "above")
 
-            elapsed = (
-                now - alert["last_triggered_at"]
-            )
+        triggered = False
+        current_value = None
+        message = None
 
-            if elapsed < alert["cooldown"]:
+        # -----------------------------
+        # PRICE ALERT
+        # -----------------------------
+
+        if alert_type == "PRICE":
+
+            current_value = current_price
+
+            if current_price is None:
                 continue
 
-        alert_type = alert["type"]
+            if str(condition).upper() in (
+                "CROSSES ABOVE",
+                "CROSS_ABOVE"
+            ):
+                triggered = (
+                    previous_price is not None
+                    and current_price > target
+                    and previous_price <= target
+                )
 
-        current_value = None
-        condition_met = False
+            elif str(condition).upper() in (
+                "CROSSES BELOW",
+                "CROSS_BELOW"
+            ):
+                triggered = (
+                    previous_price is not None
+                    and current_price < target
+                    and previous_price >= target
+                )
 
-        # ---------------- PRICE ----------------
+            else:
+                triggered = _evaluate_condition(
+                    current_price,
+                    target,
+                    condition
+                )
 
-        if alert_type == "price":
-
-            current_value = price
-
-            condition_met = _evaluate_condition(
-                price,
-                alert["condition"],
-                alert["operator"],
-                alert["previous_value"]
+            message = (
+                f"{symbol}: Price is now {current_price}"
+                f" (Target: {target})"
             )
 
-        # ---------------- RSI ----------------
+        # -----------------------------
+        # RSI ALERT
+        # -----------------------------
 
-        elif alert_type == "rsi":
+        elif alert_type == "RSI":
 
             current_value = rsi
 
-            condition_met = _evaluate_condition(
-                rsi,
-                alert["condition"],
-                alert["operator"],
-                alert["previous_value"]
+            if rsi is None:
+                continue
+
+            if str(condition).upper() in (
+                "CROSSES ABOVE",
+                "CROSS_ABOVE"
+            ):
+                triggered = (
+                    previous_rsi is not None
+                    and rsi > target
+                    and previous_rsi <= target
+                )
+
+            elif str(condition).upper() in (
+                "CROSSES BELOW",
+                "CROSS_BELOW"
+            ):
+                triggered = (
+                    previous_rsi is not None
+                    and rsi < target
+                    and previous_rsi >= target
+                )
+
+            else:
+                triggered = _evaluate_condition(
+                    rsi,
+                    target,
+                    condition
+                )
+
+            message = (
+                f"{symbol}: RSI is {rsi:.2f}"
+                f" (Target: {target})"
             )
 
-        # ---------------- VOLUME ----------------
+        # -----------------------------
+        # VOLUME ALERT
+        # -----------------------------
 
-        elif alert_type == "volume":
+        elif alert_type == "VOLUME":
 
+            # If target exists, compare volume ratio when available.
+            # Otherwise use the provided volume value.
             current_value = (
                 volume_ratio
                 if volume_ratio is not None
                 else volume
             )
 
-            condition_met = _evaluate_condition(
+            if current_value is None:
+                continue
+
+            triggered = _evaluate_condition(
                 current_value,
-                alert["condition"],
-                alert["operator"],
-                alert["previous_value"]
+                target,
+                condition
             )
 
-        # ---------------- PATTERN ----------------
+            message = (
+                f"{symbol}: Volume metric is {current_value:.2f}"
+                f" (Target: {target})"
+            )
 
-        elif alert_type == "pattern":
+        # -----------------------------
+        # PATTERN ALERT
+        # -----------------------------
+
+        elif alert_type == "PATTERN":
 
             current_value = pattern
 
-            condition_met = (
-                pattern is not None
-                and str(pattern).lower()
-                == str(alert["condition"]).lower()
+            if not pattern:
+                continue
+
+            expected = _normalize_text(
+                alert.get("message") or target
             )
 
-        # ---------------- MACD ----------------
+            if expected:
+                triggered = expected == pattern
+            else:
+                triggered = bool(pattern) and pattern != "NO PATTERN"
 
-        elif alert_type == "macd":
+            message = (
+                f"{symbol}: Candlestick pattern detected: {pattern}"
+            )
+
+        # -----------------------------
+        # MACD ALERT
+        # -----------------------------
+
+        elif alert_type == "MACD":
 
             current_value = macd_cross
 
-            condition_met = (
-                macd_cross is not None
-                and str(macd_cross).lower()
-                == str(alert["condition"]).lower()
+            if not macd_cross:
+                continue
+
+            if condition in ("BULLISH", "BULLISH CROSS"):
+                triggered = "BULLISH" in macd_cross
+
+            elif condition in ("BEARISH", "BEARISH CROSS"):
+                triggered = "BEARISH" in macd_cross
+
+            else:
+                expected = _normalize_text(
+                    alert.get("message") or target
+                )
+                triggered = (
+                    macd_cross == expected
+                    if expected
+                    else False
+                )
+
+            message = (
+                f"{symbol}: MACD signal: {macd_cross}"
             )
 
-        # ---------------- AI SCORE ----------------
+        # -----------------------------
+        # AI SCORE ALERT
+        # -----------------------------
 
-        elif alert_type == "ai_score":
+        elif alert_type == "AI_SCORE":
 
             current_value = ai_score
 
-            condition_met = _evaluate_condition(
+            if ai_score is None:
+                continue
+
+            triggered = _evaluate_condition(
                 ai_score,
-                alert["condition"],
-                alert["operator"],
-                alert["previous_value"]
+                target,
+                condition
             )
 
-        # ---------------- DIRECTION ----------------
+            message = (
+                f"{symbol}: AI Score is {ai_score:.2f}"
+                f" (Target: {target})"
+            )
 
-        elif alert_type == "direction":
+        # -----------------------------
+        # DIRECTION ALERT
+        # -----------------------------
+
+        elif alert_type == "DIRECTION":
 
             current_value = direction
 
-            condition_met = (
-                direction is not None
-                and str(direction).upper()
-                == str(alert["condition"]).upper()
+            if not direction:
+                continue
+
+            expected = _normalize_text(
+                alert.get("message") or target
             )
 
-        # ---------------- TRIGGER ----------------
+            if expected:
+                triggered = direction == expected
 
-        if condition_met:
-
-            custom_message = alert["message"]
-
-            if custom_message:
-
-                msg = custom_message
-
-            else:
-
-                msg = (
-                    f"🔔 {symbol} "
-                    f"{alert_type.upper()} Alert triggered! "
-                    f"Current: {current_value}"
-                )
-
-            triggered.append(
-                _trigger_alert(
-                    alert,
-                    current_value,
-                    msg
-                )
+            message = (
+                f"{symbol}: Market direction is {direction}"
             )
 
-        # Update previous value
-        alert["previous_value"] = current_value
+        if triggered:
+            if _trigger_alert(
+                alert,
+                current_value,
+                message
+            ):
+                triggered_alerts.append(alert)
 
-        if current_value is not None:
-            alert["current"] = current_value
-
-    return triggered
-
-
-# ============================================================
-# NUMERIC SAFE CONVERSION
-# ============================================================
-
-def _safe_numeric(value):
-
-    try:
-
-        if value is None:
-            return None
-
-        value = float(value)
-
-        if value != value:  # NaN
-            return None
-
-        return value
-
-    except (ValueError, TypeError):
-
-        return None
+    return triggered_alerts
 
 
-# ============================================================
+# =========================================================
 # DISPLAY ALERTS
-# ============================================================
+# =========================================================
 
 def display_alerts():
-
     init_alerts()
 
-    st.sidebar.subheader("🔔 Smart Alerts")
+    alerts = _get_alerts()
 
-    if not st.session_state.alerts:
+    st.subheader("🔔 Active Alerts")
 
-        st.sidebar.info("No alerts set.")
+    if not alerts:
+        st.info("এখনো কোনো Alert তৈরি করা হয়নি।")
         return
 
-    for i, alert in enumerate(st.session_state.alerts):
+    for alert in alerts:
 
         status = (
-            "✅ Triggered"
-            if alert["triggered"]
-            else "⏳ Active"
+            "🟢 Active"
+            if alert.get("enabled", True)
+            else "⚪ Disabled"
         )
 
-        repeat_text = (
-            "🔁 Repeat"
-            if alert["repeat"]
-            else "1️⃣ Once"
-        )
+        alert_type = alert.get("type", "")
+        symbol = alert.get("symbol", "")
 
-        st.sidebar.markdown(
-            f"**{i+1}. {alert['symbol']}**"
-        )
+        target = alert.get("target")
 
-        st.sidebar.caption(
-            f"{alert['type']} | {status} | {repeat_text}"
-        )
-
-        st.sidebar.write(
-            f"Condition: {alert['operator']} "
-            f"{alert['condition']}"
-        )
-
-        st.sidebar.write(
-            f"Current: {alert['current']}"
-        )
-
-        if alert["triggered"]:
-
-            st.sidebar.success(
-                f"Triggered {alert['triggered_count']} time(s)"
+        if target is not None:
+            description = (
+                f"{symbol} | {alert_type} | "
+                f"{alert.get('condition')} {target}"
+            )
+        else:
+            description = (
+                f"{symbol} | {alert_type}"
             )
 
-        if st.sidebar.button(
-            "🗑️ Remove",
-            key=f"remove_alert_{alert['id']}"
-        ):
+        with st.container(border=True):
+            col1, col2 = st.columns([4, 1])
 
-            remove_alert(i)
+            with col1:
+                st.write(description)
+                st.caption(status)
 
-            st.rerun()
+            with col2:
+                if st.button(
+                    "❌",
+                    key=f"remove_alert_{alert['id']}"
+                ):
+                    remove_alert(alert["id"])
+                    st.rerun()
 
 
-# ============================================================
-# ALERT HISTORY DISPLAY
-# ============================================================
+# =========================================================
+# DISPLAY ALERT HISTORY
+# =========================================================
 
 def display_alert_history():
-
     init_alerts()
 
-    st.sidebar.subheader("📜 Alert History")
+    st.subheader("📜 Alert History")
 
     history = st.session_state.alert_history
 
     if not history:
-
-        st.sidebar.info("No alert history.")
+        st.info("এখনো কোনো Alert Trigger হয়নি।")
         return
 
-    for record in history[:20]:
+    for item in reversed(history[-30:]):
 
-        st.sidebar.write(
-            f"🔔 {record['symbol']} "
-            f"| {record['type']}"
+        event_time = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.localtime(item["time"])
         )
 
-        st.sidebar.caption(
-            record["message"]
+        st.write(
+            f"🔔 **{item['symbol']}** — "
+            f"{item['message']}"
         )
 
+        st.caption(event_time)
 
-# ============================================================
-# CLEAR ALERTS
-# ============================================================
 
-def clear_alerts():
+# =========================================================
+# REMOVE ALERT
+# =========================================================
 
+def remove_alert(alert_id):
     init_alerts()
 
-    st.session_state.alerts = []
+    st.session_state.crypto_alerts = [
+        alert
+        for alert in st.session_state.crypto_alerts
+        if alert.get("id") != alert_id
+    ]
+
+    st.session_state.alert_last_triggered.pop(
+        alert_id, None
+    )
 
 
-# ============================================================
+# =========================================================
+# CLEAR ALERTS
+# =========================================================
+
+def clear_alerts():
+    init_alerts()
+
+    st.session_state.crypto_alerts = []
+    st.session_state.alert_last_triggered = {}
+
+
+# =========================================================
 # CLEAR HISTORY
-# ============================================================
+# =========================================================
 
 def clear_alert_history():
-
     init_alerts()
 
     st.session_state.alert_history = []
 
 
-# ============================================================
-# REMOVE ALERT
-# ============================================================
+# =========================================================
+# RESET ALERT
+# =========================================================
 
-def remove_alert(index):
-
+def reset_alert(alert_id):
     init_alerts()
 
-    if 0 <= index < len(st.session_state.alerts):
+    for alert in st.session_state.crypto_alerts:
+        if alert.get("id") == alert_id:
+            alert["enabled"] = True
 
-        del st.session_state.alerts[index]
+            st.session_state.alert_last_triggered.pop(
+                alert_id, None
+            )
 
+            return True
 
-# ============================================================
-# RESET TRIGGERED ALERT
-# ============================================================
-
-def reset_alert(index):
-
-    init_alerts()
-
-    if 0 <= index < len(st.session_state.alerts):
-
-        alert = st.session_state.alerts[index]
-
-        alert["triggered"] = False
-        alert["last_triggered_at"] = 0
-        alert["previous_value"] = None
-
-
-# ============================================================
-# END
-# ============================================================
+    return False
