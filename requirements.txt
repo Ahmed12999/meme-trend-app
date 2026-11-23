@@ -2,5 +2,5 @@ streamlit
 pandas
 requests
 numpy
-ccxt
+ccxt>=4.5.0
 ta
