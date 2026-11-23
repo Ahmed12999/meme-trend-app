@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import math
 import time
 from datetime import datetime, timezone
 
@@ -18,35 +17,18 @@ st.set_page_config(
 )
 
 # ============================================================
-# CONSTANTS
-# ============================================================
-
-COINGECKO_API = "https://api.coingecko.com/api/v3"
-DEXSCREENER_API = "https://api.dexscreener.com"
-BINANCE_API = "https://api.binance.com/api/v3"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 AI-Crypto-Advisor"
-}
-
-TIMEFRAMES = [
-    "1m", "3m", "5m", "10m", "15m",
-    "30m", "1h", "2h", "4h", "1d"
-]
-
-EXCHANGES = [
-    "Binance", "Bybit", "KuCoin", "Kraken",
-    "Coinbase", "MEXC", "Bitget", "OKX",
-    "Gate.io", "HTX"
-]
-
-# ============================================================
-# OPTIONAL IMPORTS
+# OPTIONAL MODULE IMPORTS
 # ============================================================
 
 AI_AVAILABLE = False
-AI_IMPORT_ERROR = None
+TECHNICALS_AVAILABLE = False
+EXCHANGE_AVAILABLE = False
+ALERTS_AVAILABLE = False
+TRENDING_AVAILABLE = False
+HONEYPOT_AVAILABLE = False
+PRICE_DATA_AVAILABLE = False
 
+# AI logic
 try:
     from ai_logic import (
         calculate_indicators,
@@ -57,7 +39,7 @@ try:
         bollinger_breakout_signal,
         calculate_sma_crossover,
         macd_histogram_signal,
-        detect_candlestick_patterns,
+        detect_candlestick_patterns as ai_detect_patterns,
         candlestick_volume_ai,
         volume_spike_summary,
         risk_signal,
@@ -67,27 +49,13 @@ try:
         analyze_new_coin
     )
     AI_AVAILABLE = True
-
 except Exception as e:
     AI_IMPORT_ERROR = str(e)
 
-    # Individual fallback imports
-    try:
-        from ai_logic import (
-            calculate_indicators,
-            calculate_ai_score,
-            detect_market_regime,
-            generate_ai_report
-        )
-        AI_AVAILABLE = True
-    except Exception:
-        pass
-
 # Technical indicators
-TECHNICALS_AVAILABLE = False
-
 try:
     from technicals import (
+        clean_series,
         calculate_rsi,
         calculate_ema,
         calculate_macd,
@@ -103,13 +71,10 @@ try:
         find_support_resistance
     )
     TECHNICALS_AVAILABLE = True
-
 except Exception as e:
     TECHNICALS_IMPORT_ERROR = str(e)
 
-# Exchange utilities
-EXCHANGE_AVAILABLE = False
-
+# Exchange module
 try:
     from utils.exchange import (
         EXCHANGE_MAP,
@@ -120,29 +85,20 @@ except Exception as e:
     EXCHANGE_IMPORT_ERROR = str(e)
     EXCHANGE_MAP = {}
 
-    try:
-        from utils.exchange import get_candles_from_exchange
-        EXCHANGE_AVAILABLE = True
-    except Exception:
-        get_candles_from_exchange = None
-
-# Price utilities
+# Optional price-data functions
 try:
     from utils.price_data import (
-        get_binance_ohlcv,
-        get_price_series,
         get_real_ohlcv,
+        get_price_series,
         resample_ohlcv_10m
     )
+    PRICE_DATA_AVAILABLE = True
 except Exception:
-    get_binance_ohlcv = None
-    get_price_series = None
     get_real_ohlcv = None
+    get_price_series = None
     resample_ohlcv_10m = None
 
 # Alerts
-ALERTS_AVAILABLE = False
-
 try:
     from alerts import (
         init_alerts,
@@ -156,20 +112,10 @@ try:
         reset_alert
     )
     ALERTS_AVAILABLE = True
-except Exception:
-    try:
-        from alerts import (
-            check_alerts,
-            display_alerts,
-            init_alerts
-        )
-        ALERTS_AVAILABLE = True
-    except Exception:
-        pass
+except Exception as e:
+    ALERTS_IMPORT_ERROR = str(e)
 
 # Trending
-TRENDING_AVAILABLE = False
-
 try:
     from utils.trending import (
         fetch_dexscreener_trending,
@@ -182,8 +128,6 @@ except Exception as e:
     TRENDING_IMPORT_ERROR = str(e)
 
 # Honeypot
-HONEYPOT_AVAILABLE = False
-
 try:
     from honeypot_checker.checker import (
         check_honeypot,
@@ -195,44 +139,50 @@ try:
 except Exception as e:
     HONEYPOT_IMPORT_ERROR = str(e)
 
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+COINGECKO_API = "https://api.coingecko.com/api/v3"
+DEXSCREENER_API = "https://api.dexscreener.com/latest/dex"
+
+TIMEFRAMES = [
+    "1m", "3m", "5m", "10m", "15m",
+    "30m", "1h", "4h", "1d"
+]
+
 # ============================================================
 # SESSION STATE
 # ============================================================
 
-def init_session():
+DEFAULT_STATE = {
+    "loaded_source": None,
+    "loaded_name": None,
+    "loaded_symbol": None,
+    "loaded_market_data": None,
+    "loaded_ohlcv": None,
+    "loaded_price_series": None,
+    "loaded_key": None,
+    "last_analysis": None
+}
 
-    defaults = {
-        "analysis_data": {},
-        "selected_coin": None,
-        "selected_coin_id": None,
-        "selected_symbol": None,
-        "last_price": None,
-        "price_history": [],
-        "strictness": "medium",
-        "alerts_initialized": False,
-        "last_analysis": None
-    }
+for key, value in DEFAULT_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+if ALERTS_AVAILABLE:
+    try:
+        init_alerts()
+    except Exception:
+        pass
 
-    if ALERTS_AVAILABLE and not st.session_state.alerts_initialized:
-        try:
-            init_alerts()
-            st.session_state.alerts_initialized = True
-        except Exception:
-            pass
-
-
-init_session()
 
 # ============================================================
 # GENERAL HELPERS
 # ============================================================
 
 def safe_float(value, default=None):
-
     try:
         number = float(value)
 
@@ -245,1845 +195,1755 @@ def safe_float(value, default=None):
         return default
 
 
-def safe_text(value, default="Unavailable"):
-
-    if value is None:
-        return default
-
-    try:
-        if pd.isna(value):
-            return default
-    except Exception:
-        pass
-
-    return str(value)
-
-
-def format_price(value):
-
-    value = safe_float(value)
-
-    if value is None:
-        return "Unavailable"
-
-    if abs(value) < 0.000001:
-        return f"${value:.10f}"
-
-    if abs(value) < 0.01:
-        return f"${value:.8f}"
-
-    return f"${value:,.6f}"
-
-
-def format_number(value):
-
-    value = safe_float(value)
-
-    if value is None:
-        return "Unavailable"
-
-    return f"{value:,.2f}"
-
-
-def normalize_price_series(data):
-
-    if data is None:
-        return None
-
-    if isinstance(data, pd.DataFrame):
-
-        if "close" not in data.columns:
-            return None
-
-        data = data["close"]
-
-    try:
-
-        series = pd.to_numeric(
-            pd.Series(data),
-            errors="coerce"
-        )
-
-        series = series.replace(
-            [np.inf, -np.inf],
-            np.nan
-        ).dropna()
-
-        series = series[series > 0]
-
-        if series.empty:
-            return None
-
-        return series.reset_index(drop=True)
-
-    except Exception:
-        return None
-
-
-def normalize_ohlcv(data):
-
-    if data is None:
-        return None
-
-    if not isinstance(data, pd.DataFrame):
-        return None
-
-    df = data.copy()
-
-    df.columns = [
-        str(c).lower().strip()
-        for c in df.columns
-    ]
-
-    required = [
-        "open", "high", "low", "close", "volume"
-    ]
-
-    if not all(c in df.columns for c in required):
-        return None
-
-    for col in required:
-        df[col] = pd.to_numeric(
-            df[col],
-            errors="coerce"
-        )
-
-    df = df.replace(
-        [np.inf, -np.inf],
-        np.nan
-    )
-
-    df = df.dropna(subset=required)
-
-    df = df[
-        (df["open"] > 0)
-        & (df["high"] > 0)
-        & (df["low"] > 0)
-        & (df["close"] > 0)
-        & (df["volume"] >= 0)
-        & (df["high"] >= df["low"])
-        & (df["high"] >= df["open"])
-        & (df["high"] >= df["close"])
-        & (df["low"] <= df["open"])
-        & (df["low"] <= df["close"])
-    ]
-
-    if df.empty:
-        return None
-
-    if "timestamp" in df.columns:
-
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"],
-            errors="coerce",
-            utc=True
-        )
-
-        df = df.dropna(subset=["timestamp"])
-
-        df = df.drop_duplicates(
-            subset=["timestamp"],
-            keep="last"
-        )
-
-        df = df.sort_values("timestamp")
-
-    return df.reset_index(drop=True)
-
-
-def latest_value(series):
-
+def normalize_price_series(series):
     if series is None:
         return None
 
     try:
-
-        values = pd.to_numeric(
+        result = pd.to_numeric(
             pd.Series(series),
             errors="coerce"
-        ).dropna()
-
-        if values.empty:
-            return None
-
-        return safe_float(values.iloc[-1])
-
-    except Exception:
-        return safe_float(series)
-
-
-# ============================================================
-# HTTP REQUEST HELPER
-# ============================================================
-
-def api_get(url, params=None, timeout=12):
-
-    try:
-
-        response = requests.get(
-            url,
-            params=params,
-            headers=HEADERS,
-            timeout=timeout
         )
 
-        response.raise_for_status()
+        result = result.replace(
+            [np.inf, -np.inf], np.nan
+        ).dropna()
 
-        return response.json()
+        result = result[result > 0].reset_index(drop=True)
 
-    except requests.exceptions.HTTPError:
+        if result.empty:
+            return None
+
+        return result
+
+    except Exception:
         return None
 
-    except requests.exceptions.RequestException:
+
+def normalize_ohlcv(df):
+    required = [
+        "open", "high", "low", "close", "volume"
+    ]
+
+    if df is None or not isinstance(df, pd.DataFrame):
         return None
 
-    except ValueError:
+    if df.empty:
         return None
+
+    data = df.copy()
+    data.columns = [
+        str(c).lower().strip()
+        for c in data.columns
+    ]
+
+    if not all(c in data.columns for c in required):
+        return None
+
+    for col in required:
+        data[col] = pd.to_numeric(
+            data[col], errors="coerce"
+        )
+
+    data = data.replace(
+        [np.inf, -np.inf], np.nan
+    )
+
+    data = data.dropna(subset=required)
+
+    data = data[
+        (data["open"] > 0)
+        & (data["high"] > 0)
+        & (data["low"] > 0)
+        & (data["close"] > 0)
+        & (data["volume"] >= 0)
+    ]
+
+    data = data[
+        (data["high"] >= data["low"])
+        & (data["high"] >= data["open"])
+        & (data["high"] >= data["close"])
+        & (data["low"] <= data["open"])
+        & (data["low"] <= data["close"])
+    ]
+
+    if "timestamp" in data.columns:
+        data["timestamp"] = pd.to_datetime(
+            data["timestamp"],
+            errors="coerce",
+            utc=True
+        )
+
+        data = data.dropna(subset=["timestamp"])
+        data = data.drop_duplicates(
+            subset=["timestamp"],
+            keep="last"
+        )
+        data = data.sort_values("timestamp")
+
+    return data.reset_index(drop=True)
+
+
+def format_price(value):
+    number = safe_float(value)
+
+    if number is None:
+        return "N/A"
+
+    if number >= 1:
+        return f"${number:,.4f}"
+
+    return f"${number:.8f}"
+
+
+def format_number(value):
+    number = safe_float(value)
+
+    if number is None:
+        return "N/A"
+
+    return f"{number:,.2f}"
+
+
+def save_loaded_data(
+    source,
+    name,
+    symbol,
+    market_data=None,
+    ohlcv=None,
+    price_series=None,
+    key=None
+):
+    st.session_state.loaded_source = source
+    st.session_state.loaded_name = name
+    st.session_state.loaded_symbol = symbol
+    st.session_state.loaded_market_data = market_data
+    st.session_state.loaded_ohlcv = ohlcv
+    st.session_state.loaded_price_series = price_series
+    st.session_state.loaded_key = key
+
+
+def clear_loaded_data():
+    for key in DEFAULT_STATE:
+        st.session_state[key] = DEFAULT_STATE[key]
+
 
 # ============================================================
 # COINGECKO
 # ============================================================
 
 @st.cache_data(ttl=60, show_spinner=False)
-def search_coingecko(query):
+def search_coingecko_coins(query):
+    try:
+        response = requests.get(
+            f"{COINGECKO_API}/search",
+            params={"query": query},
+            timeout=15
+        )
 
-    if not query:
+        response.raise_for_status()
+        result = response.json()
+
+        return result.get("coins", [])[:30]
+
+    except Exception:
         return []
-
-    data = api_get(
-        f"{COINGECKO_API}/search",
-        {"query": query}
-    )
-
-    if not data:
-        return []
-
-    return data.get("coins", [])
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_coingecko_coin(coin_id):
+def get_coingecko_market_data(coin_id):
+    try:
+        response = requests.get(
+            f"{COINGECKO_API}/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "ids": coin_id,
+                "price_change_percentage": "24h"
+            },
+            timeout=15
+        )
 
-    data = api_get(
-        f"{COINGECKO_API}/coins/{coin_id}",
-        {
-            "localization": "false",
-            "tickers": "false",
-            "market_data": "true",
-            "community_data": "false",
-            "developer_data": "false"
-        }
-    )
+        response.raise_for_status()
+        data = response.json()
 
-    if not data:
+        if not data:
+            return None
+
+        return data[0]
+
+    except Exception:
         return None
 
-    market = data.get("market_data", {})
 
-    return {
-        "id": data.get("id"),
-        "name": data.get("name"),
-        "symbol": str(data.get("symbol", "")).upper(),
-        "price": safe_float(
-            market.get("current_price", {}).get("usd")
-        ),
-        "change": safe_float(
-            market.get("price_change_percentage_24h")
-        ),
-        "volume": safe_float(
-            market.get("total_volume", {}).get("usd")
-        ),
-        "market_cap": safe_float(
-            market.get("market_cap", {}).get("usd")
-        ),
-        "high_24h": safe_float(
-            market.get("high_24h", {}).get("usd")
-        ),
-        "low_24h": safe_float(
-            market.get("low_24h", {}).get("usd")
-        ),
-        "image": data.get("image", {}).get("large")
-    }
+@st.cache_data(ttl=180, show_spinner=False)
+def get_coingecko_history(coin_id, days=30):
+    try:
+        response = requests.get(
+            f"{COINGECKO_API}/coins/{coin_id}/market_chart",
+            params={
+                "vs_currency": "usd",
+                "days": days
+            },
+            timeout=20
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        prices = data.get("prices", [])
+
+        if not prices:
+            return None
+
+        df = pd.DataFrame(
+            prices,
+            columns=["timestamp", "price"]
+        )
+
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"],
+            unit="ms",
+            utc=True
+        )
+
+        df["price"] = pd.to_numeric(
+            df["price"],
+            errors="coerce"
+        )
+
+        df = df.dropna()
+        df = df[df["price"] > 0]
+
+        if df.empty:
+            return None
+
+        return df.reset_index(drop=True)
+
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def get_coingecko_live_market(coin_id):
+    return get_coingecko_market_data(coin_id)
 
 
 # ============================================================
 # DEXSCREENER
 # ============================================================
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def get_dex_token(address):
+    try:
+        response = requests.get(
+            f"{DEXSCREENER_API}/tokens/{address}",
+            timeout=15
+        )
 
-    if not address:
+        response.raise_for_status()
+        data = response.json()
+
+        pairs = data.get("pairs") or []
+
+        if not pairs:
+            return None
+
+        pairs.sort(
+            key=lambda p: safe_float(
+                (p.get("liquidity") or {}).get("usd"), 0
+            ) or 0,
+            reverse=True
+        )
+
+        return pairs[0]
+
+    except Exception:
         return None
 
-    data = api_get(
-        f"{DEXSCREENER_API}/latest/dex/tokens/{address}"
-    )
 
-    if not data:
+def dex_pair_to_market(pair):
+    if not pair:
         return None
 
-    pairs = data.get("pairs", [])
-
-    if not pairs:
-        return None
-
-    pairs = sorted(
-        pairs,
-        key=lambda x: safe_float(
-            x.get("liquidity", {}).get("usd"),
-            0
-        ),
-        reverse=True
-    )
-
-    pair = pairs[0]
-
-    base = pair.get("baseToken", {})
-    quote = pair.get("quoteToken", {})
+    base = pair.get("baseToken") or {}
+    quote = pair.get("quoteToken") or {}
+    liquidity = pair.get("liquidity") or {}
+    volume = pair.get("volume") or {}
+    price_change = pair.get("priceChange") or {}
 
     return {
         "name": base.get("name", "Unknown"),
         "symbol": base.get("symbol", "UNKNOWN"),
-        "price": safe_float(pair.get("priceUsd")),
-        "change": safe_float(
-            pair.get("priceChange", {}).get("h24")
-        ),
-        "volume": safe_float(
-            pair.get("volume", {}).get("h24")
-        ),
-        "liquidity": safe_float(
-            pair.get("liquidity", {}).get("usd")
-        ),
+        "price": safe_float(pair.get("priceUsd"), 0),
         "market_cap": safe_float(
             pair.get("marketCap")
-            or pair.get("fdv")
+            or pair.get("fdv"),
+            0
         ),
-        "chain": pair.get("chainId"),
-        "dex": pair.get("dexId"),
+        "volume_24h": safe_float(volume.get("h24"), 0),
+        "change_24h": safe_float(price_change.get("h24"), 0),
+        "liquidity": safe_float(liquidity.get("usd"), 0),
+        "chain": pair.get("chainId", "Unknown"),
         "pair_address": pair.get("pairAddress"),
-        "url": pair.get("url"),
         "base_address": base.get("address"),
         "quote_symbol": quote.get("symbol"),
-        "pairs": pairs
+        "dex_id": pair.get("dexId")
     }
-
-
-@st.cache_data(ttl=20, show_spinner=False)
-def get_dex_pair_price(pair_address):
-
-    data = api_get(
-        f"{DEXSCREENER_API}/latest/dex/pairs/"
-        f"solana/{pair_address}"
-    )
-
-    if not data:
-        return None
-
-    pairs = data.get("pairs", [])
-
-    if not pairs:
-        return None
-
-    return safe_float(
-        pairs[0].get("priceUsd")
-    )
-
-
-# ============================================================
-# BINANCE OHLCV
-# ============================================================
-
-BINANCE_INTERVALS = {
-    "1m": "1m",
-    "3m": "3m",
-    "5m": "5m",
-    "15m": "15m",
-    "30m": "30m",
-    "1h": "1h",
-    "2h": "2h",
-    "4h": "4h",
-    "1d": "1d"
-}
-
-
-@st.cache_data(ttl=30, show_spinner=False)
-def fetch_binance_ohlcv(symbol, interval="5m", limit=200):
-
-    if interval == "10m":
-        source_interval = "5m"
-    else:
-        source_interval = BINANCE_INTERVALS.get(interval)
-
-    if source_interval is None:
-        return None
-
-    symbol = str(symbol).upper().replace("/", "")
-
-    data = api_get(
-        f"{BINANCE_API}/klines",
-        {
-            "symbol": symbol,
-            "interval": source_interval,
-            "limit": min(int(limit), 1000)
-        }
-    )
-
-    if not data or not isinstance(data, list):
-        return None
-
-    try:
-
-        rows = []
-
-        for candle in data:
-
-            rows.append({
-                "timestamp": pd.to_datetime(
-                    candle[0],
-                    unit="ms",
-                    utc=True
-                ),
-                "open": float(candle[1]),
-                "high": float(candle[2]),
-                "low": float(candle[3]),
-                "close": float(candle[4]),
-                "volume": float(candle[5])
-            })
-
-        df = normalize_ohlcv(
-            pd.DataFrame(rows)
-        )
-
-        if df is None:
-            return None
-
-        # Remove incomplete candle
-        if len(df) > 1:
-            df = df.iloc[:-1].copy()
-
-        if interval == "10m":
-
-            if resample_ohlcv_10m is not None:
-
-                try:
-                    df = resample_ohlcv_10m(df)
-                    df = normalize_ohlcv(df)
-                except Exception:
-                    return None
-
-            else:
-                return None
-
-        return df
-
-    except Exception:
-        return None
 
 
 # ============================================================
 # EXCHANGE OHLCV
 # ============================================================
 
-@st.cache_data(ttl=30, show_spinner=False)
-def fetch_exchange_ohlcv(
+def fetch_exchange_candles(
     exchange_name,
     symbol,
-    interval="5m",
-    limit=200
+    timeframe,
+    limit
 ):
-
     if not EXCHANGE_AVAILABLE:
         return None
 
-    if get_candles_from_exchange is None:
-        return None
-
     try:
+        fetch_interval = timeframe
 
-        fetch_interval = (
-            "5m" if interval == "10m"
-            else interval
-        )
+        # 10m is not universally supported.
+        if timeframe == "10m":
+            fetch_interval = "5m"
+            limit = max(limit * 2 + 4, 100)
 
-        data = get_candles_from_exchange(
+        df = get_candles_from_exchange(
             exchange_name,
             symbol,
             interval=fetch_interval,
             limit=limit,
-            drop_incomplete=True,
-            show_warnings=False
+            drop_incomplete=True
         )
 
-        df = normalize_ohlcv(data)
+        df = normalize_ohlcv(df)
 
-        if df is None:
+        if df is None or df.empty:
             return None
 
-        if interval == "10m":
-
-            if resample_ohlcv_10m is None:
+        if timeframe == "10m":
+            if PRICE_DATA_AVAILABLE and callable(resample_ohlcv_10m):
+                df = resample_ohlcv_10m(df)
+                df = normalize_ohlcv(df)
+            else:
                 return None
 
-            df = resample_ohlcv_10m(df)
-            df = normalize_ohlcv(df)
+        if df is None or df.empty:
+            return None
 
-        return df
+        return df.tail(limit).reset_index(drop=True)
 
     except Exception:
         return None
 
 
-# ============================================================
-# LIVE PRICE
-# ============================================================
-
-@st.cache_data(ttl=10, show_spinner=False)
-def get_binance_live_price(symbol):
-
-    symbol = str(symbol).upper().replace("/", "")
-
-    data = api_get(
-        f"{BINANCE_API}/ticker/price",
-        {"symbol": symbol}
+def fetch_preferred_ohlcv(
+    exchange_name,
+    symbol,
+    timeframe,
+    limit
+):
+    # First try exchange module
+    df = fetch_exchange_candles(
+        exchange_name,
+        symbol,
+        timeframe,
+        limit
     )
 
-    if not data:
-        return None
+    if df is not None and not df.empty:
+        return df
 
-    return safe_float(data.get("price"))
+    # Binance fallback through price_data
+    if (
+        PRICE_DATA_AVAILABLE
+        and callable(get_real_ohlcv)
+        and exchange_name == "Binance"
+    ):
+        try:
+            df = get_real_ohlcv(
+                symbol,
+                interval=timeframe,
+                limit=limit
+            )
 
+            return normalize_ohlcv(df)
 
-@st.cache_data(ttl=10, show_spinner=False)
-def get_dex_live_price(address):
+        except Exception:
+            return None
 
-    data = get_dex_token(address)
-
-    if not data:
-        return None
-
-    return data.get("price")
+    return None
 
 
 # ============================================================
-# TECHNICAL INDICATORS
+# PRICE-ONLY TECHNICAL ANALYSIS
 # ============================================================
 
-def calculate_technical_data(price_series):
-
+def calculate_price_only_indicators(prices):
     if not TECHNICALS_AVAILABLE:
         return None
 
-    if price_series is None or len(price_series) < 20:
+    values = normalize_price_series(prices)
+
+    if values is None or len(values) < 15:
         return None
 
     result = {}
 
     try:
+        rsi = calculate_rsi(values, period=14)
+        result["rsi"] = safe_float(rsi.iloc[-1])
 
-        rsi_series = calculate_rsi(price_series)
-        ema20_series = calculate_ema(
-            price_series, 20
-        )
-        ema50_series = calculate_ema(
-            price_series, 50
-        )
-        ema200_series = calculate_ema(
-            price_series, 200
-        )
+        ema20 = calculate_ema(values, period=20)
+        result["ema20"] = safe_float(ema20.iloc[-1])
 
-        macd_series, signal_series, histogram = (
-            calculate_macd(price_series)
-        )
+        ema50 = calculate_ema(values, period=50)
+        result["ema50"] = safe_float(ema50.iloc[-1])
 
-        upper, middle, lower = (
-            calculate_bollinger_bands(price_series)
-        )
+        ema200 = calculate_ema(values, period=200)
+        result["ema200"] = safe_float(ema200.iloc[-1])
 
-        sma20_series = calculate_sma(
-            price_series, 20
-        )
-        sma50_series = calculate_sma(
-            price_series, 50
+        macd, signal, histogram = calculate_macd(values)
+
+        result["macd"] = safe_float(macd.iloc[-1])
+        result["macd_signal"] = safe_float(signal.iloc[-1])
+        result["macd_histogram"] = safe_float(
+            histogram.iloc[-1]
         )
 
-        result = {
-            "rsi": latest_value(rsi_series),
-            "ema20": latest_value(ema20_series),
-            "ema50": latest_value(ema50_series),
-            "ema200": latest_value(ema200_series),
-            "macd": latest_value(macd_series),
-            "macd_signal": latest_value(signal_series),
-            "macd_histogram": latest_value(histogram),
-            "bb_upper": latest_value(upper),
-            "bb_middle": latest_value(middle),
-            "bb_lower": latest_value(lower),
-            "sma20": latest_value(sma20_series),
-            "sma50": latest_value(sma50_series),
-            "rsi_series": rsi_series,
-            "ema20_series": ema20_series,
-            "ema50_series": ema50_series,
-            "macd_series": macd_series,
-            "signal_series": signal_series,
-            "histogram_series": histogram
-        }
+        upper, middle, lower = calculate_bollinger_bands(
+            values,
+            period=20
+        )
 
-        if len(price_series) >= 21:
+        result["bb_upper"] = safe_float(upper.iloc[-1])
+        result["bb_middle"] = safe_float(middle.iloc[-1])
+        result["bb_lower"] = safe_float(lower.iloc[-1])
 
-            result["rsi_divergence"] = (
-                detect_rsi_divergence(
-                    price_series,
-                    rsi_series
-                )
-            )
+        sma20 = calculate_sma(values, period=20)
+        sma50 = calculate_sma(values, period=50)
 
-            result["macd_strength"] = (
-                macd_histogram_strength(histogram)
-            )
+        result["sma20"] = safe_float(sma20.iloc[-1])
+        result["sma50"] = safe_float(sma50.iloc[-1])
+
+        result["histogram_strength"] = (
+            macd_histogram_strength(histogram)
+        )
+
+        result["divergence"] = detect_rsi_divergence(
+            values,
+            rsi
+        )
+
+        result["current_price"] = safe_float(
+            values.iloc[-1]
+        )
+
+        result["data_points"] = len(values)
 
         return result
-
-    except Exception as e:
-
-        st.warning(
-            f"Technical calculation error: {e}"
-        )
-
-        return None
-
-
-# ============================================================
-# OHLCV ANALYSIS
-# ============================================================
-
-def analyze_real_ohlcv(df):
-
-    result = {
-        "available": False,
-        "pattern": "Unavailable",
-        "volume_spike": None,
-        "volume_ratio": None,
-        "atr": None,
-        "ai_score": None,
-        "market_regime": "Unavailable",
-        "ai_report": None,
-        "bb_signal": "Unavailable",
-        "sma_signal": "Unavailable",
-        "macd_signal": "Unavailable",
-        "support": None,
-        "resistance": None
-    }
-
-    df = normalize_ohlcv(df)
-
-    if df is None or len(df) < 20:
-        return result
-
-    result["available"] = True
-
-    # Candlestick
-    if TECHNICALS_AVAILABLE:
-
-        try:
-
-            patterns = detect_candlestick_patterns(
-                df.copy()
-            )
-
-            if (
-                isinstance(patterns, pd.DataFrame)
-                and "pattern" in patterns.columns
-            ):
-
-                result["pattern"] = safe_text(
-                    patterns["pattern"].iloc[-1],
-                    "No Pattern"
-                )
-
-        except Exception:
-            pass
-
-        # Volume spike
-        try:
-
-            result["volume_spike"] = (
-                detect_volume_spike(df.copy())
-            )
-
-            result["volume_ratio"] = (
-                calculate_volume_ratio(df.copy())
-            )
-
-        except Exception:
-            pass
-
-        # ATR
-        try:
-
-            result["atr"] = latest_value(
-                calculate_atr(df.copy())
-            )
-
-        except Exception:
-            pass
-
-    # AI indicators
-    if AI_AVAILABLE:
-
-        try:
-
-            ai_indicators = calculate_indicators(
-                df.copy()
-            )
-
-            result["indicators"] = ai_indicators
-
-        except Exception as e:
-
-            result["indicator_error"] = str(e)
-
-        try:
-
-            result["ai_score"] = calculate_ai_score(
-                df.copy()
-            )
-
-        except Exception:
-            pass
-
-        try:
-
-            result["market_regime"] = (
-                detect_market_regime(df.copy())
-            )
-
-        except Exception:
-            pass
-
-        try:
-
-            result["ai_report"] = generate_ai_report(
-                df.copy(),
-                result["ai_score"]
-            )
-
-        except Exception:
-            pass
-
-        # Bollinger breakout
-        try:
-
-            result["bb_signal"] = (
-                bollinger_breakout_signal(df.copy())
-            )
-
-        except Exception:
-            pass
-
-        # SMA crossover
-        try:
-
-            result["sma_signal"] = (
-                calculate_sma_crossover(df.copy())
-            )
-
-        except Exception:
-            pass
-
-        # MACD histogram
-        try:
-
-            result["macd_signal"] = (
-                macd_histogram_signal(df.copy())
-            )
-
-        except Exception:
-            pass
-
-    # Support resistance
-    if TECHNICALS_AVAILABLE:
-
-        try:
-
-            support, resistance = find_support_resistance(
-                df["close"],
-                window=50
-            )
-
-            result["support"] = safe_float(support)
-            result["resistance"] = safe_float(resistance)
-
-        except Exception:
-            pass
-
-    return result
-
-
-# ============================================================
-# AI DECISION
-# ============================================================
-
-def make_ai_decision(
-    rsi,
-    macd,
-    macd_signal,
-    price_change,
-    volume
-):
-
-    if not AI_AVAILABLE:
-        return "AI Engine unavailable."
-
-    try:
-
-        return ai_decision(
-            rsi,
-            macd,
-            macd_signal,
-            price_change,
-            volume,
-            strictness=st.session_state.strictness
-        )
-
-    except Exception as e:
-
-        return f"AI decision unavailable: {e}"
-
-
-# ============================================================
-# RISK MANAGEMENT
-# ============================================================
-
-def make_risk_analysis(
-    current_price,
-    atr
-):
-
-    if current_price is None or atr is None:
-        return None
-
-    if current_price <= 0 or atr <= 0:
-        return None
-
-    # Preferred ATR risk engine
-    if AI_AVAILABLE:
-
-        try:
-
-            result = calculate_atr_risk(
-                current_price,
-                atr,
-                direction="LONG"
-            )
-
-            if result is not None:
-                return result
-
-        except Exception:
-            pass
-
-    # Technicals fallback
-    if TECHNICALS_AVAILABLE:
-
-        try:
-
-            return risk_management_signals(
-                current_price,
-                atr,
-                direction="LONG",
-                atr_multiplier=2.0,
-                reward_ratio=2.0
-            )
-
-        except Exception:
-            pass
-
-    # Last fallback
-    try:
-
-        return {
-            "direction": "LONG",
-            "entry": current_price,
-            "stop_loss": current_price - (atr * 2),
-            "take_profit": current_price + (atr * 4),
-            "atr": atr,
-            "risk_reward": 2.0
-        }
 
     except Exception:
         return None
 
 
 # ============================================================
-# ALERT CHECK
+# REAL OHLCV ANALYSIS
 # ============================================================
 
-def run_alert_check(
-    symbol,
-    price,
-    rsi=None,
-    volume=None,
-    pattern=None,
-    volume_ratio=None,
-    ai_score=None,
-    direction=None,
-    price_change=None
-):
+def calculate_real_ohlcv_analysis(df):
+    data = normalize_ohlcv(df)
 
-    if not ALERTS_AVAILABLE:
-        return
+    if data is None or len(data) < 35:
+        return None
+
+    result = {}
+
+    close = data["close"]
 
     try:
-
-        triggered = check_alerts(
-            symbol,
-            price,
-            rsi=rsi,
-            volume=volume,
-            pattern=pattern,
-            volume_ratio=volume_ratio,
-            ai_score=ai_score,
-            direction=direction,
-            change_percent=price_change
+        result["price_indicators"] = (
+            calculate_price_only_indicators(close)
         )
 
-        if triggered:
+        result["atr_series"] = calculate_atr(
+            data,
+            period=14
+        )
 
-            for message in triggered:
-                st.warning(f"🔔 {message}")
+        result["atr"] = safe_float(
+            result["atr_series"].iloc[-1]
+        )
+
+        result["volume_spike"] = detect_volume_spike(data)
+
+        result["volume_ratio"] = calculate_volume_ratio(data)
+
+        patterns = detect_candlestick_patterns(data)
+
+        if (
+            patterns is not None
+            and not patterns.empty
+            and "pattern" in patterns.columns
+        ):
+            result["patterns"] = patterns
+            result["latest_pattern"] = str(
+                patterns["pattern"].iloc[-1]
+            )
+        else:
+            result["patterns"] = None
+            result["latest_pattern"] = "Unavailable"
+
+        result["support"], result["resistance"] = (
+            find_support_resistance(close)
+        )
+
+        result["data"] = data
+
+        return result
+
+    except Exception:
+        return None
+
+
+# ============================================================
+# AI ENGINE
+# ============================================================
+
+def calculate_ai_engine(df):
+    if not AI_AVAILABLE:
+        return None
+
+    try:
+        indicators = calculate_indicators(df)
+
+        score = calculate_ai_score(
+            df,
+            indicators=indicators
+        )
+
+        regime = detect_market_regime(
+            df,
+            indicators=indicators
+        )
+
+        report = generate_ai_report(
+            df,
+            result=score
+        )
+
+        return {
+            "indicators": indicators,
+            "score": score,
+            "regime": regime,
+            "report": report
+        }
 
     except Exception as e:
-
-        st.caption(
-            f"Alert check unavailable: {e}"
-        )
-
-
-# ============================================================
-# LIVE PRICE DISPLAY
-# ============================================================
-
-def render_live_price(price, change=None):
-
-    if price is None:
-        st.caption("Live price unavailable.")
-        return
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric(
-            "Live Price",
-            format_price(price)
-        )
-
-    with col2:
-
-        if change is not None:
-
-            st.metric(
-                "24H Change",
-                f"{change:+.2f}%"
-            )
+        return {
+            "error": str(e)
+        }
 
 
 # ============================================================
 # ANALYSIS DISPLAY
 # ============================================================
 
-def display_analysis(
-    name,
-    symbol,
-    market_data,
-    ohlcv_df,
-    interval,
-    source_name
-):
+def show_price_indicators(indicators, current_price):
+    st.markdown("### 📈 Technical Indicators")
 
-    st.markdown("---")
-
-    st.header(
-        f"📊 {name} ({symbol})"
-    )
-
-    historical_df = normalize_ohlcv(ohlcv_df)
-
-    real_ohlcv = (
-        historical_df is not None
-        and len(historical_df) >= 20
-    )
-
-    # Price data
-    market_price = safe_float(
-        market_data.get("price")
-    )
-
-    market_change = safe_float(
-        market_data.get("change"),
-        0
-    )
-
-    market_volume = safe_float(
-        market_data.get("volume"),
-        0
-    )
-
-    # Technical price must be last completed candle close
-    if real_ohlcv:
-
-        price_series = historical_df["close"].copy()
-
-        current_price = safe_float(
-            historical_df["close"].iloc[-1]
-        )
-
-        previous_close = safe_float(
-            historical_df["close"].iloc[-2]
-        )
-
-        if previous_close and previous_close > 0:
-
-            candle_change = (
-                (current_price - previous_close)
-                / previous_close
-            ) * 100
-
-        else:
-            candle_change = 0
-
-    else:
-
-        price_series = None
-        current_price = market_price
-        candle_change = market_change
-
-    # Metrics
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
-            "Market Price",
-            format_price(market_price)
-        )
-
-    with col2:
-        st.metric(
-            "24H Price Change",
-            f"{market_change:+.2f}%"
-        )
-
-    with col3:
-        st.metric(
-            "24H Volume",
-            f"${market_volume:,.2f}"
-        )
-
-    st.caption(
-        f"Data source: {source_name} | "
-        f"Timeframe: {interval}"
-    )
-
-    # Technicals
-    technical = None
-
-    if price_series is not None and TECHNICALS_AVAILABLE:
-
-        technical = calculate_technical_data(
-            price_series
-        )
-
-    # OHLCV analysis
-    candle_analysis = analyze_real_ohlcv(
-        historical_df
-    ) if real_ohlcv else {
-        "available": False
-    }
-
-    # --------------------------------------------------------
-    # TECHNICAL INDICATORS
-    # --------------------------------------------------------
-
-    st.markdown("## 📈 Technical Indicators")
-
-    if technical:
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "RSI (14)",
-                format_number(technical.get("rsi"))
-            )
-
-        with col2:
-            st.metric(
-                "EMA 20",
-                format_price(technical.get("ema20"))
-            )
-
-        with col3:
-            st.metric(
-                "EMA 50",
-                format_price(technical.get("ema50"))
-            )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "MACD",
-                format_number(technical.get("macd"))
-            )
-
-        with col2:
-            st.metric(
-                "MACD Signal",
-                format_number(technical.get("macd_signal"))
-            )
-
-        with col3:
-            st.metric(
-                "MACD Histogram",
-                format_number(
-                    technical.get("macd_histogram")
-                )
-            )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "SMA 20",
-                format_price(technical.get("sma20"))
-            )
-
-        with col2:
-            st.metric(
-                "SMA 50",
-                format_price(technical.get("sma50"))
-            )
-
-        with col3:
-            st.metric(
-                "EMA 200",
-                format_price(technical.get("ema200"))
-            )
-
-        st.markdown("### Bollinger Bands")
-
-        st.write(
-            f"Upper: {format_price(technical.get('bb_upper'))}"
-        )
-
-        st.write(
-            f"Middle: {format_price(technical.get('bb_middle'))}"
-        )
-
-        st.write(
-            f"Lower: {format_price(technical.get('bb_lower'))}"
-        )
-
-        if technical.get("rsi_divergence"):
-            st.write(
-                f"**RSI Divergence:** "
-                f"{technical['rsi_divergence']}"
-            )
-
-        if technical.get("macd_strength"):
-            st.write(
-                f"**MACD Momentum:** "
-                f"{technical['macd_strength']}"
-            )
-
-    else:
-
+    if not indicators:
         st.warning(
             "Technical indicators unavailable or insufficient price history."
         )
+        return
 
-    # --------------------------------------------------------
-    # REAL OHLCV ANALYSIS
-    # --------------------------------------------------------
+    rsi = indicators.get("rsi")
+    ema20 = indicators.get("ema20")
+    ema50 = indicators.get("ema50")
+    ema200 = indicators.get("ema200")
+    macd = indicators.get("macd")
+    macd_signal = indicators.get("macd_signal")
+    sma20 = indicators.get("sma20")
+    sma50 = indicators.get("sma50")
 
-    st.markdown("## 🕯️ Candlestick & Volume Analysis")
+    col1, col2, col3, col4 = st.columns(4)
 
-    if real_ohlcv:
+    col1.metric(
+        "RSI (14)",
+        f"{rsi:.2f}" if rsi is not None else "N/A"
+    )
 
-        st.success(
-            f"Real OHLCV connected: {source_name}"
+    col2.metric(
+        "EMA 20",
+        format_price(ema20)
+    )
+
+    col3.metric(
+        "EMA 50",
+        format_price(ema50)
+    )
+
+    col4.metric(
+        "EMA 200",
+        format_price(ema200)
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "MACD",
+        format_price(macd)
+    )
+
+    col2.metric(
+        "MACD Signal",
+        format_price(macd_signal)
+    )
+
+    col3.metric(
+        "SMA 20",
+        format_price(sma20)
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "SMA 50",
+        format_price(sma50)
+    )
+
+    histogram = indicators.get("macd_histogram")
+
+    col2.metric(
+        "MACD Histogram",
+        format_price(histogram)
+    )
+
+    col3.metric(
+        "Price",
+        format_price(current_price)
+    )
+
+    upper = indicators.get("bb_upper")
+    middle = indicators.get("bb_middle")
+    lower = indicators.get("bb_lower")
+
+    st.markdown("#### Bollinger Bands")
+
+    b1, b2, b3 = st.columns(3)
+
+    b1.metric("Upper Band", format_price(upper))
+    b2.metric("Middle Band", format_price(middle))
+    b3.metric("Lower Band", format_price(lower))
+
+    st.caption(
+        "RSI Divergence: "
+        + str(indicators.get("divergence", "Unavailable"))
+    )
+
+    st.caption(
+        "MACD Momentum: "
+        + str(indicators.get("histogram_strength", "Unavailable"))
+    )
+
+
+def show_price_chart(price_df, ohlcv=None):
+    st.markdown("### 📉 Historical Price Chart")
+
+    if ohlcv is not None and not ohlcv.empty:
+        data = ohlcv.copy()
+
+        if "timestamp" in data.columns:
+            data = data.set_index("timestamp")
+
+        st.line_chart(
+            data[["close"]],
+            use_container_width=True
         )
 
-        st.write(
-            f"**Last Pattern:** "
-            f"{candle_analysis.get('pattern', 'Unavailable')}"
+        return
+
+    if price_df is not None and not price_df.empty:
+        chart = price_df.copy()
+
+        if "timestamp" in chart.columns:
+            chart = chart.set_index("timestamp")
+
+        st.line_chart(
+            chart[["price"]],
+            use_container_width=True
         )
 
-        spike = candle_analysis.get("volume_spike")
+        return
 
-        if spike is True:
-            st.warning("🔥 Volume Spike detected.")
-        elif spike is False:
-            st.success("No abnormal volume spike detected.")
-        else:
-            st.info("Volume spike data unavailable.")
+    st.info("No historical price chart available.")
 
-        ratio = candle_analysis.get("volume_ratio")
 
-        if ratio is not None:
-            st.metric(
-                "Volume Ratio",
-                f"{ratio:.2f}x"
-            )
+def show_ohlcv_analysis(df, analysis):
+    st.markdown("### 🕯️ Candlestick & Volume Analysis")
 
-        if AI_AVAILABLE:
-
-            try:
-
-                candle_ai = candlestick_volume_ai(
-                    historical_df.copy(),
-                    spike
-                )
-
-                st.write(candle_ai)
-
-            except Exception:
-                pass
-
-            try:
-
-                st.write(
-                    volume_spike_summary(spike)
-                )
-
-            except Exception:
-                pass
-
-    else:
-
-        st.warning(
+    if df is None or analysis is None:
+        st.info(
             "Real OHLCV unavailable. Candlestick patterns, "
             "volume spike and ATR analysis are disabled."
         )
+        return
 
-    # --------------------------------------------------------
-    # ADDITIONAL SIGNALS
-    # --------------------------------------------------------
+    col1, col2, col3 = st.columns(3)
 
-    st.markdown("## 🚦 Additional Signals")
+    col1.metric(
+        "Latest Pattern",
+        analysis.get("latest_pattern", "N/A")
+    )
 
-    if real_ohlcv:
+    spike = analysis.get("volume_spike")
 
-        st.write(
-            "**Bollinger Breakout:**",
-            candle_analysis.get("bb_signal")
-        )
-
-        st.write(
-            "**SMA Crossover:**",
-            candle_analysis.get("sma_signal")
-        )
-
-        st.write(
-            "**MACD Histogram:**",
-            candle_analysis.get("macd_signal")
-        )
-
+    if spike is True:
+        spike_text = "YES"
+    elif spike is False:
+        spike_text = "NO"
     else:
+        spike_text = "Unavailable"
 
+    col2.metric("Volume Spike", spike_text)
+
+    ratio = analysis.get("volume_ratio")
+
+    col3.metric(
+        "Volume Ratio",
+        f"{ratio:.2f}x" if ratio is not None else "N/A"
+    )
+
+    atr = analysis.get("atr")
+
+    st.metric(
+        "ATR (14)",
+        format_price(atr)
+    )
+
+    if analysis.get("patterns") is not None:
+        st.markdown("#### Recent Candlestick Patterns")
+
+        pattern_data = analysis["patterns"]
+
+        cols = [
+            c for c in [
+                "timestamp",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "pattern"
+            ]
+            if c in pattern_data.columns
+        ]
+
+        st.dataframe(
+            pattern_data[cols].tail(15),
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+def show_ai_analysis(df, analysis, current_price):
+    st.markdown("### 🤖 AI Score Engine")
+
+    if df is None:
         st.info(
-            "OHLCV-based additional signals require real candle data."
+            "AI Score requires real OHLCV data. "
+            "CoinGecko price-only data cannot be used for this engine."
         )
+        return None
 
-    # --------------------------------------------------------
-    # MARKET REGIME
-    # --------------------------------------------------------
+    if not AI_AVAILABLE:
+        st.warning("AI engine module is unavailable.")
+        return None
 
-    st.markdown("## 🌍 Market Regime")
+    with st.spinner("Running AI analysis..."):
+        ai_result = calculate_ai_engine(df)
 
-    if real_ohlcv:
+    if not ai_result:
+        st.warning("AI analysis unavailable.")
+        return None
 
-        st.write(
-            candle_analysis.get(
-                "market_regime",
-                "Unavailable"
-            )
-        )
+    if ai_result.get("error"):
+        st.error(ai_result["error"])
+        return None
 
-    else:
+    score_data = ai_result.get("score")
 
-        st.info(
-            "Market regime requires real OHLCV data."
-        )
-
-    # --------------------------------------------------------
-    # AI SCORE
-    # --------------------------------------------------------
-
-    st.markdown("## 🤖 AI Score Engine")
-
-    ai_result = candle_analysis.get("ai_score")
-
-    if isinstance(ai_result, dict):
-
-        score = ai_result.get("score")
-
-        direction = ai_result.get(
-            "direction",
-            "Unavailable"
-        )
-
-        confidence = ai_result.get("confidence")
+    if isinstance(score_data, dict):
+        score = safe_float(score_data.get("score"))
+        confidence = safe_float(score_data.get("confidence"))
+        direction = score_data.get("direction", "UNKNOWN")
 
         col1, col2, col3 = st.columns(3)
 
-        with col1:
-            st.metric(
-                "AI Score",
-                format_number(score)
+        col1.metric(
+            "AI Score",
+            f"{score:.2f}" if score is not None else "N/A"
+        )
+
+        col2.metric(
+            "Confidence",
+            f"{confidence:.1f}%" if confidence is not None else "N/A"
+        )
+
+        col3.metric(
+            "AI Direction",
+            str(direction)
+        )
+
+        if "coverage" in score_data:
+            st.caption(
+                f"Signal coverage: {score_data.get('coverage')}"
             )
 
-        with col2:
-            st.metric(
-                "Direction",
-                safe_text(direction)
-            )
+    st.markdown("#### 🌍 Market Regime")
+    st.info(str(ai_result.get("regime", "Unavailable")))
 
-        with col3:
+    st.markdown("#### 🧠 AI Market Report")
+    report = ai_result.get("report")
 
-            st.metric(
-                "Confidence",
-                safe_text(confidence)
-            )
-
-        if ai_result.get("signals"):
-
-            with st.expander("AI Signals"):
-                st.write(ai_result["signals"])
-
+    if report:
+        st.markdown(str(report))
     else:
+        st.info("AI report unavailable.")
 
-        st.info(
-            "AI Score requires real OHLCV data and a working AI engine."
-        )
+    return ai_result
 
-    # --------------------------------------------------------
-    # SUPPORT / RESISTANCE
-    # --------------------------------------------------------
 
-    st.markdown("## 🎯 Support & Resistance")
+def show_risk_analysis(df, real_analysis, current_price):
+    st.markdown("### 🛡️ Risk Management")
 
-    if real_ohlcv:
-
-        st.write(
-            "**Support:**",
-            format_price(candle_analysis.get("support"))
-        )
-
-        st.write(
-            "**Resistance:**",
-            format_price(candle_analysis.get("resistance"))
-        )
-
-    else:
-
-        st.info(
-            "Support and Resistance unavailable."
-        )
-
-    # --------------------------------------------------------
-    # RISK MANAGEMENT
-    # --------------------------------------------------------
-
-    st.markdown("## 🛡️ Risk Management")
-
-    atr = candle_analysis.get("atr")
-
-    if atr is not None and current_price is not None:
-
-        risk = make_risk_analysis(
-            current_price,
-            atr
-        )
-
-        if isinstance(risk, dict):
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric(
-                    "Entry",
-                    format_price(risk.get("entry"))
-                )
-
-            with col2:
-                st.metric(
-                    "Stop Loss",
-                    format_price(risk.get("stop_loss"))
-                )
-
-            with col3:
-                st.metric(
-                    "Take Profit",
-                    format_price(risk.get("take_profit"))
-                )
-
-            st.write(
-                f"**Risk/Reward:** "
-                f"{risk.get('risk_reward', 'Unavailable')}"
-            )
-
-        else:
-
-            st.info(
-                "Risk calculation unavailable."
-            )
-
-        st.write(
-            f"**ATR:** {format_price(atr)}"
-        )
-
-    else:
-
+    if df is None or real_analysis is None:
         st.info(
             "ATR risk analysis requires real OHLCV candles."
         )
+        return
 
-    # --------------------------------------------------------
-    # ENTRY / EXIT
-    # --------------------------------------------------------
+    atr = real_analysis.get("atr")
 
-    st.markdown("## 🎯 Entry / Exit Suggestions")
+    if atr is None:
+        st.warning("ATR unavailable.")
+        return
 
-    if AI_AVAILABLE and current_price is not None:
+    direction = st.selectbox(
+        "Risk Direction",
+        ["LONG", "SHORT"],
+        key="risk_direction"
+    )
+
+    if TECHNICALS_AVAILABLE:
+        risk = risk_management_signals(
+            current_price,
+            atr,
+            direction=direction,
+            atr_multiplier=2.0,
+            reward_ratio=2.0
+        )
+    else:
+        risk = None
+
+    if risk:
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("Entry", format_price(risk["entry"]))
+        c2.metric("Stop Loss", format_price(risk["stop_loss"]))
+        c3.metric("Take Profit", format_price(risk["take_profit"]))
+
+        st.caption(
+            f"Risk / Reward: 1 : {risk.get('risk_reward', 2)}"
+        )
+    else:
+        st.warning("Risk calculation unavailable.")
+
+
+def show_support_resistance(real_analysis):
+    st.markdown("### 🎯 Support & Resistance")
+
+    if real_analysis is None:
+        st.info(
+            "Support and Resistance unavailable without price history."
+        )
+        return
+
+    support = real_analysis.get("support")
+    resistance = real_analysis.get("resistance")
+
+    c1, c2 = st.columns(2)
+
+    c1.metric("Support", format_price(support))
+    c2.metric("Resistance", format_price(resistance))
+
+
+def show_additional_signals(df, analysis):
+    st.markdown("### 🚦 Additional Signals")
+
+    if df is None or analysis is None:
+        st.info(
+            "OHLCV-based additional signals require real candle data."
+        )
+        return
+
+    st.write(
+        "Volume Spike:",
+        analysis.get("volume_spike")
+    )
+
+    st.write(
+        "Volume Ratio:",
+        analysis.get("volume_ratio")
+    )
+
+    if AI_AVAILABLE:
+        try:
+            breakout = bollinger_breakout_signal(df)
+            st.write("Bollinger Breakout:", breakout)
+        except Exception:
+            st.write("Bollinger Breakout: Unavailable")
 
         try:
+            crossover = calculate_sma_crossover(df)
+            st.write("SMA Crossover:", crossover)
+        except Exception:
+            st.write("SMA Crossover: Unavailable")
 
-            support = candle_analysis.get("support")
-            resistance = candle_analysis.get("resistance")
+        try:
+            momentum = macd_histogram_signal(df)
+            st.write("MACD Histogram:", momentum)
+        except Exception:
+            st.write("MACD Histogram: Unavailable")
 
-            rsi = (
-                technical.get("rsi")
-                if technical else None
+
+def show_final_decision(
+    current_price,
+    indicators,
+    ai_result,
+    real_ohlcv
+):
+    st.markdown("### 🚦 Final AI Decision")
+
+    if not indicators:
+        st.warning("⚠️ পর্যাপ্ত Indicator Data নেই।")
+        return
+
+    if real_ohlcv and ai_result:
+        score_data = ai_result.get("score", {})
+
+        if isinstance(score_data, dict):
+            direction = score_data.get(
+                "direction",
+                "UNKNOWN"
             )
 
-            macd = (
-                technical.get("macd")
-                if technical else None
+            confidence = safe_float(
+                score_data.get("confidence")
             )
-
-            signal = (
-                technical.get("macd_signal")
-                if technical else None
-            )
-
-            entry_exit = get_entry_exit_points(
-                current_price,
-                [support] if support is not None else [],
-                [resistance] if resistance is not None else [],
-                rsi,
-                macd,
-                signal
-            )
-
-            if isinstance(entry_exit, dict):
-
-                st.write(
-                    "**Entry:**",
-                    safe_text(
-                        entry_exit.get("entry")
-                        or entry_exit.get("entry_point")
-                    )
-                )
-
-                st.write(
-                    "**Exit:**",
-                    safe_text(
-                        entry_exit.get("exit")
-                        or entry_exit.get("exit_point")
-                    )
-                )
-
-            else:
-
-                st.write(entry_exit)
-
-        except Exception as e:
 
             st.info(
-                f"Entry/Exit unavailable: {e}"
+                f"AI Direction: {direction} | "
+                f"Confidence: "
+                f"{confidence:.1f}%"
+                if confidence is not None
+                else f"AI Direction: {direction}"
             )
 
-    # --------------------------------------------------------
-    # AI REPORT
-    # --------------------------------------------------------
+            return
 
-    st.markdown("## 🧠 AI Market Report")
+    rsi = indicators.get("rsi")
+    macd = indicators.get("macd")
+    signal = indicators.get("macd_signal")
 
-    report = candle_analysis.get("ai_report")
+    if rsi is None:
+        st.warning("⚠️ RSI data insufficient.")
+        return
 
-    if report:
+    if macd is None or signal is None:
+        st.warning(
+            "⚠️ MACD data insufficient for a final decision."
+        )
+        return
 
-        st.markdown(str(report))
+    if rsi < 30 and macd > signal:
+        st.success("🟢 BUY — Bullish technical conditions")
+
+    elif rsi > 70 and macd < signal:
+        st.error("🔴 SELL — Bearish technical conditions")
+
+    elif macd > signal:
+        st.info("🟢 UP / HOLD — Bullish momentum")
+
+    elif macd < signal:
+        st.warning("🔴 DOWN / HOLD — Bearish momentum")
 
     else:
+        st.info("🟡 HOLD — Neutral conditions")
 
-        st.info(
-            "AI report unavailable."
+
+# ============================================================
+# ALERTS UI
+# ============================================================
+
+def alerts_tab():
+    st.subheader("🔔 Price & Technical Alerts")
+
+    if not ALERTS_AVAILABLE:
+        st.warning("Alerts module is unavailable.")
+        return
+
+    with st.form("add_alert_form"):
+        symbol = st.text_input(
+            "Coin Symbol",
+            value="BTC"
+        ).upper().strip()
+
+        alert_type = st.selectbox(
+            "Alert Type",
+            [
+                "PRICE",
+                "RSI",
+                "VOLUME",
+                "PATTERN",
+                "MACD",
+                "AI_SCORE",
+                "DIRECTION"
+            ]
         )
 
-    # --------------------------------------------------------
-    # FINAL DECISION
-    # --------------------------------------------------------
-
-    st.markdown("---")
-    st.markdown("## 🚦 Final AI Decision")
-
-    rsi = technical.get("rsi") if technical else None
-    macd = technical.get("macd") if technical else None
-    macd_signal = (
-        technical.get("macd_signal")
-        if technical else None
-    )
-
-    decision = make_ai_decision(
-        rsi,
-        macd,
-        macd_signal,
-        candle_change,
-        market_volume
-    )
-
-    st.info(str(decision))
-
-    # --------------------------------------------------------
-    # ALERTS
-    # --------------------------------------------------------
-
-    score = None
-
-    if isinstance(ai_result, dict):
-        score = safe_float(ai_result.get("score"))
-
-    run_alert_check(
-        symbol,
-        current_price,
-        rsi=rsi,
-        volume=market_volume,
-        pattern=candle_analysis.get("pattern"),
-        volume_ratio=candle_analysis.get("volume_ratio"),
-        ai_score=score,
-        direction=(
-            ai_result.get("direction")
-            if isinstance(ai_result, dict)
-            else None
-        ),
-        price_change=candle_change
-    )
-
-    # --------------------------------------------------------
-    # PRICE CHART
-    # --------------------------------------------------------
-
-    st.markdown("## 📉 Historical Price Chart")
-
-    if price_series is not None:
-
-        chart_data = pd.DataFrame({
-            "Price": price_series
-        })
-
-        st.line_chart(
-            chart_data,
-            use_container_width=True
+        target = st.text_input(
+            "Target Value",
+            placeholder="Example: 65000"
         )
 
-    elif real_ohlcv:
-
-        st.line_chart(
-            historical_df.set_index("timestamp")["close"],
-            use_container_width=True
+        condition = st.selectbox(
+            "Condition",
+            ["ABOVE", "BELOW", "EQUALS"]
         )
 
-    else:
-
-        st.info(
-            "No historical price chart available."
+        submitted = st.form_submit_button(
+            "Create Alert"
         )
 
-    # --------------------------------------------------------
-    # OHLCV TABLE
-    # --------------------------------------------------------
+        if submitted:
+            try:
+                target_value = (
+                    safe_float(target)
+                    if target.strip()
+                    else None
+                )
 
-    if real_ohlcv:
+                add_alert(
+                    symbol,
+                    alert_type,
+                    target_value=target_value,
+                    condition=condition
+                )
 
-        with st.expander("📋 Real OHLCV Candle Data"):
+                st.success("Alert created.")
 
-            st.dataframe(
-                historical_df.tail(50),
-                use_container_width=True,
-                hide_index=True
-            )
+            except Exception as e:
+                st.error(f"Could not create alert: {e}")
 
-    # Save result
-    st.session_state.last_analysis = {
-        "name": name,
-        "symbol": symbol,
-        "price": current_price,
-        "source": source_name,
-        "interval": interval,
-        "decision": str(decision),
-        "has_real_ohlcv": real_ohlcv,
-        "rsi": rsi,
-        "macd": macd,
-        "ai_score": ai_result
-    }
+    st.divider()
 
-    return st.session_state.last_analysis
+    try:
+        display_alerts()
+    except Exception as e:
+        st.warning(f"Could not display alerts: {e}")
 
+    try:
+        display_alert_history()
+    except Exception:
+        pass
 
-# ============================================================
-# SIDEBAR
-# ============================================================
+    c1, c2 = st.columns(2)
 
-st.sidebar.title("⚙️ AI Settings")
+    with c1:
+        if st.button("Clear Alerts"):
+            try:
+                clear_alerts()
+                st.success("Alerts cleared.")
+            except Exception as e:
+                st.error(str(e))
 
-selected_exchange = st.sidebar.selectbox(
-    "Exchange",
-    EXCHANGES,
-    index=0
-)
+    with c2:
+        if st.button("Clear Alert History"):
+            try:
+                clear_alert_history()
+                st.success("Alert history cleared.")
+            except Exception as e:
+                st.error(str(e))
 
-selected_interval = st.sidebar.selectbox(
-    "Timeframe",
-    TIMEFRAMES,
-    index=2
-)
-
-candle_limit = st.sidebar.select_slider(
-    "Candle History",
-    options=[50, 100, 150, 200, 300, 500],
-    value=200
-)
-
-st.sidebar.selectbox(
-    "AI Signal Sensitivity",
-    ["low", "medium", "high"],
-    key="strictness"
-)
-
-st.sidebar.markdown("---")
-
-st.sidebar.caption(
-    "AI signals are estimates and are not guaranteed trading results."
-)
 
 # ============================================================
-# MAIN HEADER
+# TRENDING TAB
 # ============================================================
 
-st.title("🪙 Meme + Main Coin AI Market Analyzer")
+def trending_tab():
+    st.subheader("🔥 Trending Tokens")
 
-st.caption(
-    "Real Market Data | Technical Analysis | AI Score | "
-    "Market Regime | Alerts | Trending | Honeypot"
-)
+    if not TRENDING_AVAILABLE:
+        st.warning("Trending module is unavailable.")
+        return
 
-if AI_IMPORT_ERROR and not AI_AVAILABLE:
-
-    st.error(
-        f"AI Engine Import Error: {AI_IMPORT_ERROR}"
+    source = st.radio(
+        "Trending Source",
+        ["DexScreener", "CoinGecko"],
+        horizontal=True
     )
 
-if not TECHNICALS_AVAILABLE:
+    if st.button("Refresh Trending Tokens"):
+        st.cache_data.clear()
 
-    st.warning(
-        "Technicals module unavailable. "
-        "Check technicals.py imports."
+    try:
+        if source == "DexScreener":
+            tokens = fetch_dexscreener_trending()
+
+        else:
+            tokens = fetch_coingecko_trending()
+
+        if not tokens:
+            st.info("No trending tokens returned.")
+            return
+
+        for index, token in enumerate(tokens[:25]):
+            with st.container(border=True):
+                try:
+                    formatted = format_dexscreener_token(token)
+                    st.write(formatted)
+                except Exception:
+                    st.write(token)
+
+                try:
+                    st.caption(
+                        simple_ai_for_token(token)
+                    )
+                except Exception:
+                    pass
+
+    except Exception as e:
+        st.error(f"Trending error: {e}")
+
+
+# ============================================================
+# HONEYPOT TAB
+# ============================================================
+
+def honeypot_tab():
+    st.subheader("🛡️ Honeypot Checker")
+
+    if not HONEYPOT_AVAILABLE:
+        st.warning("Honeypot checker module is unavailable.")
+        return
+
+    chain = st.selectbox(
+        "Blockchain",
+        [
+            "Ethereum",
+            "BSC",
+            "Base",
+            "Arbitrum",
+            "Polygon",
+            "Solana",
+            "Pump.fun"
+        ]
     )
 
+    address = st.text_input(
+        "Token Contract Address"
+    ).strip()
+
+    if st.button("Check Token Safety"):
+        if not address:
+            st.warning("Enter a token address.")
+            return
+
+        with st.spinner("Checking token..."):
+            try:
+                if chain == "Solana":
+                    result = check_solana_token(address)
+
+                elif chain == "Pump.fun":
+                    result = check_pumpfun_token(address)
+
+                else:
+                    chain_ids = {
+                        "Ethereum": "1",
+                        "BSC": "56",
+                        "Base": "8453",
+                        "Arbitrum": "42161",
+                        "Polygon": "137"
+                    }
+
+                    result = check_honeypot(
+                        address,
+                        chain_ids[chain]
+                    )
+
+                display_honeypot_result(result)
+
+            except Exception as e:
+                st.error(f"Safety check failed: {e}")
+
+
 # ============================================================
-# TABS
+# ANALYSIS TAB
 # ============================================================
 
-tab_analysis, tab_trending, tab_honeypot, tab_alerts = st.tabs([
-    "📊 Analysis",
-    "🔥 Trending Tokens",
-    "🛡️ Honeypot Checker",
-    "🔔 Alerts"
-])
-
-# ============================================================
-# TAB 1 - ANALYSIS
-# ============================================================
-
-with tab_analysis:
-
+def analysis_tab():
     st.subheader("🔍 Select a Cryptocurrency")
 
-    data_source = st.radio(
+    source = st.radio(
         "Data Source",
         [
             "CoinGecko Search",
             "DexScreener Address",
             "Exchange Pair"
         ],
-        horizontal=True
+        horizontal=True,
+        key="data_source"
     )
 
-    selected_market = None
+    market_data = None
+    ohlcv_df = None
+    price_df = None
     selected_name = None
     selected_symbol = None
-    selected_coin_id = None
-    selected_dex_address = None
-    market_data = {}
-    ohlcv_df = None
-    source_name = "Unavailable"
+    coin_id = None
+    selected_price = None
+    selected_change = None
+    selected_volume = None
+    selected_market_cap = None
+    analysis_key = None
 
     # --------------------------------------------------------
     # COINGECKO SEARCH
     # --------------------------------------------------------
 
-    if data_source == "CoinGecko Search":
+    if source == "CoinGecko Search":
 
         query = st.text_input(
             "Search Coin",
-            placeholder="Bitcoin, Ethereum, Pi Network..."
+            value="Bitcoin",
+            key="coingecko_search"
         )
 
-        if query:
-
-            with st.spinner("Searching CoinGecko..."):
-
-                coins = search_coingecko(query)
+        if query.strip():
+            coins = search_coingecko_coins(query.strip())
 
             if coins:
-
-                options = {}
-
-                for coin in coins[:20]:
-
-                    label = (
+                options = {
+                    (
                         f"{coin.get('name')} "
-                        f"({str(coin.get('symbol', '')).upper()})"
-                    )
-
-                    options[label] = coin
+                        f"({coin.get('symbol', '').upper()})"
+                    ): coin
+                    for coin in coins
+                }
 
                 selected_label = st.selectbox(
                     "Select Correct Coin",
-                    list(options.keys())
+                    list(options.keys()),
+                    key="coingecko_selected_coin"
                 )
 
-                selected_market = options[selected_label]
+                selected_coin = options[selected_label]
+                coin_id = selected_coin.get("id")
 
-                selected_coin_id = selected_market.get("id")
+                if coin_id:
+                    market_data = get_coingecko_market_data(
+                        coin_id
+                    )
 
-                coin_info = get_coingecko_coin(
-                    selected_coin_id
-                )
+                    history = get_coingecko_history(
+                        coin_id,
+                        days=30
+                    )
 
-                if coin_info:
+                    if history is not None:
+                        price_df = history
 
-                    market_data = coin_info
-
-                    selected_name = coin_info["name"]
-                    selected_symbol = coin_info["symbol"]
-
-                    if coin_info.get("image"):
-
-                        st.image(
-                            coin_info["image"],
-                            width=65
+                    if market_data:
+                        selected_name = market_data.get(
+                            "name",
+                            selected_coin.get("name")
                         )
 
-                    st.write(
-                        f"**Market Cap:** "
-                        f"${coin_info.get('market_cap') or 0:,.2f}"
-                    )
+                        selected_symbol = market_data.get(
+                            "symbol",
+                            selected_coin.get("symbol")
+                        ).upper()
 
-                    st.write(
-                        f"**24H High:** "
-                        f"{format_price(coin_info.get('high_24h'))}"
-                    )
+                        selected_price = safe_float(
+                            market_data.get("current_price")
+                        )
 
-                    st.write(
-                        f"**24H Low:** "
-                        f"{format_price(coin_info.get('low_24h'))}"
-                    )
+                        selected_change = safe_float(
+                            market_data.get(
+                                "price_change_percentage_24h"
+                            )
+                        )
 
-                    source_name = "CoinGecko"
+                        selected_volume = safe_float(
+                            market_data.get("total_volume")
+                        )
 
-                else:
+                        selected_market_cap = safe_float(
+                            market_data.get("market_cap")
+                        )
 
-                    st.warning(
-                        "CoinGecko market data unavailable."
-                    )
+                        st.markdown("#### Optional Exchange Pair")
+
+                        use_exchange = st.checkbox(
+                            "Use Exchange OHLCV for technical analysis",
+                            key="use_coingecko_exchange"
+                        )
+
+                        exchange_pair = st.text_input(
+                            "Trading Pair",
+                            value=f"{selected_symbol}/USDT",
+                            key="coingecko_exchange_pair"
+                        )
+
+                        if use_exchange:
+                            exchange_name = st.selectbox(
+                                "Exchange",
+                                list(EXCHANGE_MAP.keys())
+                                if EXCHANGE_MAP
+                                else ["Binance"],
+                                key="coingecko_exchange_name"
+                            )
+
+                            timeframe = st.session_state.get(
+                                "selected_timeframe",
+                                "5m"
+                            )
+
+                            limit = st.session_state.get(
+                                "selected_limit",
+                                200
+                            )
+
+                            if st.button(
+                                "Load Exchange OHLCV",
+                                key="load_cg_ohlcv"
+                            ):
+                                fetched = fetch_preferred_ohlcv(
+                                    exchange_name,
+                                    exchange_pair,
+                                    timeframe,
+                                    limit
+                                )
+
+                                if fetched is not None:
+                                    ohlcv_df = fetched
+
+                                    save_loaded_data(
+                                        source,
+                                        selected_name,
+                                        selected_symbol,
+                                        market_data,
+                                        fetched,
+                                        price_df,
+                                        coin_id
+                                    )
+
+                                    st.success(
+                                        "Real Exchange OHLCV loaded."
+                                    )
+                                else:
+                                    st.error(
+                                        "Could not load exchange OHLCV."
+                                    )
 
             else:
+                st.warning("No coins found.")
 
-                st.warning(
-                    "No coin found. Try another name or symbol."
+    # --------------------------------------------------------
+    # DEXSCREENER
+    # --------------------------------------------------------
+
+    elif source == "DexScreener Address":
+
+        address = st.text_input(
+            "Token Contract Address",
+            key="dex_token_address"
+        ).strip()
+
+        if address:
+            pair = get_dex_token(address)
+
+            if pair:
+                market_data = dex_pair_to_market(pair)
+
+                selected_name = market_data["name"]
+                selected_symbol = market_data["symbol"]
+                selected_price = market_data["price"]
+                selected_change = market_data["change_24h"]
+                selected_volume = market_data["volume_24h"]
+                selected_market_cap = market_data["market_cap"]
+
+                st.success("DexScreener token data loaded.")
+
+                st.write(
+                    "Chain:",
+                    market_data["chain"]
                 )
 
-        st.markdown("### Optional Exchange Pair")
-
-        use_exchange_pair = st.checkbox(
-            "Use Exchange OHLCV for technical analysis"
-        )
-
-        if use_exchange_pair:
-
-            exchange_symbol = st.text_input(
-                "Trading Pair",
-                placeholder="BTC/USDT"
-            )
-
-            if exchange_symbol:
-
-                st.caption(
-                    "Enter the exact pair supported by the selected exchange."
+                st.write(
+                    "DEX:",
+                    market_data["dex_id"]
                 )
 
-                if st.button(
-                    "Fetch Exchange Candles",
-                    key="fetch_cg_exchange"
-                ):
+                st.write(
+                    "Liquidity:",
+                    format_price(market_data["liquidity"])
+                )
 
-                    ohlcv_df = fetch_exchange_ohlcv(
-                        selected_exchange,
-                        exchange_symbol,
-                        selected_interval,
-                        candle_limit
+                st.info(
+                    "DexScreener spot data loaded. "
+                    "For technical analysis, load real Exchange OHLCV."
+                )
+
+                use_exchange = st.checkbox(
+                    "Load Exchange OHLCV for technical analysis",
+                    key="dex_use_exchange"
+                )
+
+                if use_exchange:
+                    exchange_name = st.selectbox(
+                        "Exchange",
+                        list(EXCHANGE_MAP.keys())
+                        if EXCHANGE_MAP
+                        else ["Binance"],
+                        key="dex_exchange_name"
                     )
 
-                    if ohlcv_df is not None:
+                    pair_symbol = st.text_input(
+                        "Exchange Trading Pair",
+                        value=f"{selected_symbol}/USDT",
+                        key="dex_exchange_pair"
+                    )
 
-                        source_name = (
-                            f"{selected_exchange} - "
-                            f"{exchange_symbol}"
+                    if st.button(
+                        "Load Real Candles",
+                        key="load_dex_ohlcv"
+                    ):
+                        timeframe = st.session_state.get(
+                            "selected_timeframe",
+                            "5m"
                         )
 
-                        st.success(
-                            "Exchange OHLCV loaded."
+                        limit = st.session_state.get(
+                            "selected_limit",
+                            200
                         )
 
-                    else:
-
-                        st.error(
-                            "Exchange OHLCV could not be fetched."
+                        fetched = fetch_preferred_ohlcv(
+                            exchange_name,
+                            pair_symbol,
+                            timeframe,
+                            limit
                         )
 
-        # CoinGecko price-only fallback
-        if (
-            selected_coin_id
-            and ohlcv_df is None
-            and get_price_series is not None
+                        if fetched is not None:
+                            ohlcv_df = fetched
+
+                            save_loaded_data(
+                                source,
+                                selected_name,
+                                selected_symbol,
+                                market_data,
+                                fetched,
+                                None,
+                                address
+                            )
+
+                            st.success("Real OHLCV loaded.")
+                        else:
+                            st.error(
+                                "Exchange candles unavailable for this pair."
+                            )
+
+    # --------------------------------------------------------
+    # EXCHANGE PAIR
+    # --------------------------------------------------------
+
+    else:
+
+        exchange_name = st.selectbox(
+            "Exchange",
+            list(EXCHANGE_MAP.keys())
+            if EXCHANGE_MAP
+            else ["Binance"],
+            key="direct_exchange"
+        )
+
+        pair_symbol = st.text_input(
+            "Trading Pair",
+            value="BTC/USDT",
+            key="direct_pair"
+        ).strip().upper()
+
+        selected_symbol = (
+            pair_symbol.split("/")[0]
+            if "/" in pair_symbol
+            else pair_symbol
+        )
+
+        selected_name = selected_symbol
+
+        if st.button(
+            "Analyze Exchange Pair",
+            key="analyze_exchange_pair"
         ):
+            timeframe = st.session_state.get(
+                "selected_timeframe",
+                "5m"
+            )
 
+            limit = st.session_state.get(
+                "selected_limit",
+                200
+            )
+
+            fetched = fetch_preferred_ohlcv(
+                exchange_name,
+                pair_symbol,
+                timeframe,
+                limit
+            )
+
+            if fetched is not None and not fetched.empty:
+                ohlcv_df = fetched
+                selected_price = safe_float(
+                    fetched["close"].iloc[-1]
+                )
+
+                selected_change = (
+                    (
+                        fetched["close"].iloc[-1]
+                        - fetched["close"].iloc[-2]
+                    )
+                    / fetched["close"].iloc[-2]
+                ) * 100 if len(fetched) >= 2 else 0
+
+                selected_volume = safe_float(
+                    fetched["volume"].iloc[-1]
+                )
+
+                market_data = {
+                    "name": selected_name,
+                    "symbol": selected_symbol,
+                    "current_price": selected_price,
+                    "change": selected_change,
+                    "volume": selected_volume
+                }
+
+                save_loaded_data(
+                    source,
+                    selected_name,
+                    selected_symbol,
+                    market_data,
+                    fetched,
+                    None,
+                    f"{exchange_name}:{pair_symbol}"
+                )
+
+                st.success("Exchange OHLCV loaded.")
+
+            else:
+                st.error(
+                    "Could not fetch real OHLCV candles. "
+                    "Check exchange, symbol and timeframe."
+                )
+
+    # --------------------------------------------------------
+    # RESTORE LOADED DATA AFTER RERUN
+    # --------------------------------------------------------
+
+    if (
+        st.session_state.loaded_source == source
+        and st.session_state.loaded_market_data is not None
+    ):
+        saved = st.session_state.loaded_market_data
+
+        if market_data is None:
+            market_data = saved
+
+        if ohlcv_df is None:
+            ohlcv_df = st.session_state.loaded_ohlcv
+
+        if price_df is None:
+            price_df = st.session_state.loaded_price_series
+
+        if selected_name is None:
+            selected_name = st.session_state.loaded_name
+
+        if selected_symbol is None:
+            selected_symbol = st.session_state.loaded_symbol
+
+        if selected_price is None:
+            selected_price = safe_float(
+                saved.get("price")
+                or saved.get("current_price")
+            )
+
+        if selected_change is None:
+            selected_change = safe_float(
+                saved.get("change_24h")
+                if "change_24h" in saved
+                else saved.get("change")
+            )
+
+        if selected_volume is None:
+            selected_volume = safe_float(
+                saved.get("volume_24h")
+                if "volume_24h" in saved
+                else saved.get("volume")
+            )
+
+        if selected_market_cap is None:
+            selected_market_cap = safe_float(
+                saved.get("market_cap")
+            )
+
+    # --------------------------------------------------------
+    # SIDEBAR ANALYSIS SETTINGS
+    # --------------------------------------------------------
+
+    with st.sidebar:
+        st.markdown("## ⚙️ Analysis Settings")
+
+        timeframe = st.selectbox(
+            "Timeframe",
+            TIMEFRAMES,
+            index=TIMEFRAMES.index("5m"),
+            key="selected_timeframe"
+        )
+
+        limit = st.select_slider(
+            "Candle History",
+            options=[50, 100, 150, 200, 300, 500],
+            value=200,
+            key="selected_limit"
+        )
+
+        st.caption(
+            "Selected timeframe: " + timeframe
+        )
+
+    # --------------------------------------------------------
+    # NO DATA
+    # --------------------------------------------------------
+
+    if not selected_name or not market_data:
+        st.info("Search or select a cryptocurrency to begin.")
+        return
+
+    # --------------------------------------------------------
+    # PRICE AND MARKET DATA
+    # --------------------------------------------------------
+
+    if ohlcv_df is not None and not ohlcv_df.empty:
+        current_price = safe_float(
+            ohlcv_df["close"].iloc[-1]
+        )
+
+        if len(ohlcv_df) >= 2:
+            previous_close = safe_float(
+                ohlcv_df["close"].iloc[-2]
+            )
+
+            candle_change = (
+                (current_price - previous_close)
+                / previous_close
+            ) * 100 if previous_close else 0
+        else:
+            candle_change = 0
+
+    else:
+        current_price = selected_price
+        candle_change = selected_change
+
+    st.divider()
+
+    st.markdown(
+        f"## 📊 {selected_name} ({selected_symbol})"
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "Market Price",
+        format_price(current_price)
+    )
+
+    col2.metric(
+        "24H Price Change"
+        if source != "Exchange Pair"
+        else "Latest Candle Change",
+        f"{candle_change:+.2f}%"
+        if candle_change is not None
+        else "N/A"
+    )
+
+    col3.metric(
+        "24H Volume"
+        if source != "Exchange Pair"
+        else "Latest Candle Volume",
+        format_price(selected_volume)
+    )
+
+    if selected_market_cap is not None:
+        st.metric(
+            "Market Cap",
+            format_price(selected_market_cap)
+        )
+
+    st.caption(
+        f"Data source: {source} | Timeframe: {timeframe}"
+    )
+
+    # --------------------------------------------------------
+    # REAL OHLCV OR PRICE-ONLY DATA
+    # --------------------------------------------------------
+
+    real_ohlcv = (
+        ohlcv_df is not None
+        and not ohlcv_df.empty
+        and len(ohlcv_df) >= 35
+    )
+
+    price_series = None
+
+    if real_ohlcv:
+        price_series = normalize_price_series(
+            ohlcv_df["close"]
+        )
+
+        real_analysis = calculate_real_ohlcv_analysis(
+            ohlcv_df
+        )
+
+    else:
+        real_analysis = None
+
+        if price_df is not None and not price_df.empty:
+            price_series = normalize_price_series(
+                price_df["price"]
+            )
+
+        if price_series is None and coin_id and PRICE_DATA_AVAILABLE:
             try:
-
                 fallback = get_price_series(
-                    coin_id=selected_coin_id,
+                    coin_id=coin_id,
                     interval="1d",
                     limit=200
                 )
@@ -2091,551 +1951,182 @@ with tab_analysis:
                 price_series = normalize_price_series(
                     fallback
                 )
-
-                if price_series is not None:
-
-                    st.info(
-                        "CoinGecko historical price data loaded. "
-                        "Only price-based indicators can be calculated "
-                        "without real OHLCV."
-                    )
-
-                    if selected_market is not None:
-                        market_data["historical_prices"] = (
-                            price_series
-                        )
-
             except Exception:
                 pass
 
     # --------------------------------------------------------
-    # DEXSCREENER
+    # TECHNICAL INDICATORS
     # --------------------------------------------------------
 
-    elif data_source == "DexScreener Address":
-
-        selected_dex_address = st.text_input(
-            "Token Contract Address",
-            placeholder="Paste token contract address"
+    if price_series is not None:
+        price_indicators = calculate_price_only_indicators(
+            price_series
         )
-
-        if st.button(
-            "Find Token",
-            key="find_dex_token"
-        ):
-
-            if not selected_dex_address.strip():
-
-                st.warning(
-                    "Please enter a token address."
-                )
-
-            else:
-
-                with st.spinner("Fetching DexScreener data..."):
-
-                    market_data = get_dex_token(
-                        selected_dex_address.strip()
-                    )
-
-                if market_data:
-
-                    selected_name = market_data["name"]
-                    selected_symbol = market_data["symbol"]
-
-                    source_name = "DexScreener"
-
-                    st.success(
-                        f"Found: {selected_name} "
-                        f"({selected_symbol})"
-                    )
-
-                    st.write(
-                        f"**Chain:** {market_data.get('chain')}"
-                    )
-
-                    st.write(
-                        f"**DEX:** {market_data.get('dex')}"
-                    )
-
-                    st.write(
-                        f"**Liquidity:** "
-                        f"${market_data.get('liquidity') or 0:,.2f}"
-                    )
-
-                    if market_data.get("url"):
-
-                        st.markdown(
-                            f"[Open DexScreener Pair]({market_data['url']})"
-                        )
-
-                else:
-
-                    st.error(
-                        "Token not found or API unavailable."
-                    )
-
-    # --------------------------------------------------------
-    # EXCHANGE PAIR
-    # --------------------------------------------------------
-
-    elif data_source == "Exchange Pair":
-
-        exchange_symbol = st.text_input(
-            "Exchange Trading Pair",
-            placeholder="BTC/USDT"
-        )
-
-        if st.button(
-            "Analyze Exchange Pair",
-            key="analyze_exchange"
-        ):
-
-            if not exchange_symbol.strip():
-
-                st.warning(
-                    "Enter a trading pair."
-                )
-
-            else:
-
-                with st.spinner(
-                    f"Fetching {selected_exchange} market data..."
-                ):
-
-                    ohlcv_df = fetch_exchange_ohlcv(
-                        selected_exchange,
-                        exchange_symbol.strip(),
-                        selected_interval,
-                        candle_limit
-                    )
-
-                if ohlcv_df is not None:
-
-                    selected_symbol = (
-                        exchange_symbol.upper()
-                    )
-
-                    selected_name = selected_symbol
-
-                    last = safe_float(
-                        ohlcv_df["close"].iloc[-1]
-                    )
-
-                    previous = safe_float(
-                        ohlcv_df["close"].iloc[-2]
-                    )
-
-                    change = (
-                        ((last - previous) / previous) * 100
-                        if previous and previous > 0
-                        else 0
-                    )
-
-                    market_data = {
-                        "price": last,
-                        "change": change,
-                        "volume": safe_float(
-                            ohlcv_df["volume"].iloc[-1],
-                            0
-                        )
-                    }
-
-                    source_name = (
-                        f"{selected_exchange} - "
-                        f"{exchange_symbol}"
-                    )
-
-                    st.success(
-                        "Exchange data successfully loaded."
-                    )
-
-                else:
-
-                    st.error(
-                        "Unable to fetch OHLCV. "
-                        "Check pair name, exchange and timeframe."
-                    )
-
-    # --------------------------------------------------------
-    # ANALYZE BUTTON
-    # --------------------------------------------------------
-
-    if (
-        selected_name
-        and selected_symbol
-        and market_data
-    ):
-
-        if st.button(
-            "🚀 RUN FULL AI ANALYSIS",
-            type="primary",
-            use_container_width=True
-        ):
-
-            # If exchange OHLCV was not loaded, do not invent candles
-            if ohlcv_df is None and data_source == "Exchange Pair":
-
-                st.error(
-                    "Real OHLCV is required for this exchange analysis."
-                )
-
-            else:
-
-                display_analysis(
-                    selected_name,
-                    selected_symbol,
-                    market_data,
-                    ohlcv_df,
-                    selected_interval,
-                    source_name
-                )
-
-    # --------------------------------------------------------
-    # LAST RESULT
-    # --------------------------------------------------------
-
-    if st.session_state.last_analysis:
-
-        with st.expander("📌 Last Analysis Summary"):
-
-            st.json(
-                st.session_state.last_analysis,
-                expanded=False
-            )
-
-# ============================================================
-# TAB 2 - TRENDING TOKENS
-# ============================================================
-
-with tab_trending:
-
-    st.header("🔥 Trending Crypto & Meme Coins")
-
-    if not TRENDING_AVAILABLE:
-
-        st.warning(
-            "Trending module unavailable. "
-            "Check utils/trending.py."
-        )
-
     else:
-
-        trending_source = st.radio(
-            "Trending Source",
-            ["DexScreener", "CoinGecko"],
-            horizontal=True
-        )
-
-        if st.button(
-            "🔄 Refresh Trending Tokens",
-            use_container_width=True
-        ):
-
-            st.cache_data.clear()
-
-        if trending_source == "DexScreener":
-
-            try:
-
-                with st.spinner(
-                    "Loading DexScreener trending tokens..."
-                ):
-
-                    tokens = fetch_dexscreener_trending()
-
-                if tokens:
-
-                    for i, token in enumerate(tokens[:20]):
-
-                        try:
-
-                            formatted = format_dexscreener_token(
-                                token
-                            )
-
-                        except Exception:
-
-                            formatted = token
-
-                        try:
-
-                            ai_summary = simple_ai_for_token(
-                                token
-                            )
-
-                        except Exception:
-
-                            ai_summary = "AI summary unavailable."
-
-                        if isinstance(formatted, dict):
-
-                            name = (
-                                formatted.get("name")
-                                or formatted.get("symbol")
-                                or "Unknown Token"
-                            )
-
-                            symbol = formatted.get(
-                                "symbol",
-                                ""
-                            )
-
-                            price = formatted.get("price")
-
-                            change = formatted.get(
-                                "price_change"
-                            )
-
-                            volume = formatted.get("volume")
-
-                            liquidity = formatted.get(
-                                "liquidity"
-                            )
-
-                        else:
-
-                            name = str(formatted)
-                            symbol = ""
-                            price = None
-                            change = None
-                            volume = None
-                            liquidity = None
-
-                        with st.expander(
-                            f"{i + 1}. {name} ({symbol})"
-                        ):
-
-                            col1, col2, col3 = st.columns(3)
-
-                            with col1:
-                                st.metric(
-                                    "Price",
-                                    format_price(price)
-                                )
-
-                            with col2:
-                                st.metric(
-                                    "24H Change",
-                                    safe_text(change)
-                                )
-
-                            with col3:
-                                st.metric(
-                                    "Volume",
-                                    safe_text(volume)
-                                )
-
-                            st.write(
-                                f"**Liquidity:** "
-                                f"{safe_text(liquidity)}"
-                            )
-
-                            st.write(
-                                "**AI Insight:**",
-                                ai_summary
-                            )
-
-                else:
-
-                    st.info(
-                        "No trending tokens returned."
-                    )
-
-            except Exception as e:
-
-                st.error(
-                    f"DexScreener trending error: {e}"
-                )
-
-        else:
-
-            try:
-
-                with st.spinner(
-                    "Loading CoinGecko trending coins..."
-                ):
-
-                    coins = fetch_coingecko_trending()
-
-                if coins:
-
-                    for coin in coins[:20]:
-
-                        st.write(
-                            f"**{coin.get('name', 'Unknown')}** "
-                            f"({coin.get('symbol', '')})"
-                        )
-
-                        st.write(
-                            f"Market Rank: "
-                            f"{coin.get('market_cap_rank', 'N/A')}"
-                        )
-
-                        st.divider()
-
-                else:
-
-                    st.info(
-                        "No CoinGecko trending data available."
-                    )
-
-            except Exception as e:
-
-                st.error(
-                    f"CoinGecko trending error: {e}"
-                )
-
-# ============================================================
-# TAB 3 - HONEYPOT CHECKER
-# ============================================================
-
-with tab_honeypot:
-
-    st.header("🛡️ Token Honeypot & Safety Checker")
-
-    if not HONEYPOT_AVAILABLE:
-
-        st.warning(
-            "Honeypot checker module unavailable. "
-            "Check honeypot_checker/checker.py."
-        )
-
-    else:
-
-        chain = st.selectbox(
-            "Select Blockchain",
-            [
-                "Ethereum",
-                "BSC",
-                "Base",
-                "Arbitrum",
-                "Polygon",
-                "Solana",
-                "Pump.fun"
-            ]
-        )
-
-        token_address = st.text_input(
-            "Token Contract Address",
-            placeholder="Paste token address"
-        )
-
-        if st.button(
-            "🔍 Check Token Safety",
-            type="primary",
-            use_container_width=True
-        ):
-
-            if not token_address.strip():
-
-                st.warning(
-                    "Enter a token contract address."
-                )
-
-            else:
-
-                with st.spinner(
-                    "Checking token safety..."
-                ):
-
-                    try:
-
-                        if chain == "Solana":
-
-                            result = check_solana_token(
-                                token_address.strip()
-                            )
-
-                        elif chain == "Pump.fun":
-
-                            result = check_pumpfun_token(
-                                token_address.strip()
-                            )
-
-                        else:
-
-                            chain_ids = {
-                                "Ethereum": "1",
-                                "BSC": "56",
-                                "Base": "8453",
-                                "Arbitrum": "42161",
-                                "Polygon": "137"
-                            }
-
-                            result = check_honeypot(
-                                token_address.strip(),
-                                chain_ids[chain]
-                            )
-
-                        display_honeypot_result(
-                            result
-                        )
-
-                    except Exception as e:
-
-                        st.error(
-                            f"Honeypot check failed: {e}"
-                        )
-
-    st.caption(
-        "A safety checker cannot guarantee that a token is safe. "
-        "Always verify contract permissions, liquidity and ownership."
+        price_indicators = None
+
+    show_price_indicators(
+        price_indicators,
+        current_price
     )
 
-# ============================================================
-# TAB 4 - ALERTS
-# ============================================================
+    # --------------------------------------------------------
+    # REAL OHLCV SECTIONS
+    # --------------------------------------------------------
 
-with tab_alerts:
+    show_ohlcv_analysis(
+        ohlcv_df if real_ohlcv else None,
+        real_analysis
+    )
 
-    st.header("🔔 Price & Technical Alerts")
+    show_additional_signals(
+        ohlcv_df if real_ohlcv else None,
+        real_analysis
+    )
 
-    if not ALERTS_AVAILABLE:
+    show_support_resistance(
+        real_analysis
+    )
 
-        st.warning(
-            "Alert module unavailable. Check alerts.py."
-        )
+    show_risk_analysis(
+        ohlcv_df if real_ohlcv else None,
+        real_analysis,
+        current_price
+    )
 
-    else:
+    # --------------------------------------------------------
+    # AI ENGINE
+    # --------------------------------------------------------
 
+    ai_result = show_ai_analysis(
+        ohlcv_df if real_ohlcv else None,
+        real_analysis,
+        current_price
+    )
+
+    show_final_decision(
+        current_price,
+        price_indicators,
+        ai_result,
+        real_ohlcv
+    )
+
+    # --------------------------------------------------------
+    # CHART
+    # --------------------------------------------------------
+
+    show_price_chart(
+        price_df,
+        ohlcv_df if real_ohlcv else None
+    )
+
+    # --------------------------------------------------------
+    # ALERT CHECK
+    # --------------------------------------------------------
+
+    if ALERTS_AVAILABLE and current_price is not None:
         try:
-
-            display_alerts()
-
-        except Exception as e:
-
-            st.warning(
-                f"Alert display error: {e}"
+            check_alerts(
+                selected_symbol,
+                current_price,
+                rsi=(
+                    price_indicators.get("rsi")
+                    if price_indicators
+                    else None
+                ),
+                volume=selected_volume,
+                pattern=(
+                    real_analysis.get("latest_pattern")
+                    if real_analysis
+                    else None
+                ),
+                volume_ratio=(
+                    real_analysis.get("volume_ratio")
+                    if real_analysis
+                    else None
+                ),
+                ai_score=(
+                    ai_result.get("score", {}).get("score")
+                    if ai_result
+                    and isinstance(ai_result.get("score"), dict)
+                    else None
+                )
             )
-
-        try:
-
-            display_alert_history()
-
         except Exception:
             pass
 
-        st.markdown("---")
+    # --------------------------------------------------------
+    # RAW DATA
+    # --------------------------------------------------------
 
-        st.subheader("Alert Information")
+    with st.expander("📋 View Raw Market Data"):
+        if real_ohlcv:
+            st.dataframe(
+                ohlcv_df.tail(50),
+                use_container_width=True,
+                hide_index=True
+            )
+        elif price_df is not None:
+            st.dataframe(
+                price_df.tail(50),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No historical data available.")
 
-        st.caption(
-            "Alerts are evaluated when the Streamlit app reruns. "
-            "This is not a background monitoring service."
+    # --------------------------------------------------------
+    # DATA LIMITATION NOTICE
+    # --------------------------------------------------------
+
+    if not real_ohlcv:
+        st.info(
+            "CoinGecko/DexScreener price data is not real OHLCV. "
+            "Price-based indicators may be available, but "
+            "candlestick patterns, volume spike, ATR risk and "
+            "OHLCV-based AI Score remain disabled."
         )
 
+
 # ============================================================
-# FOOTER
+# MAIN APP
 # ============================================================
 
-st.markdown("---")
+def main():
 
-st.caption(
-    "🪙 AI Crypto Advisor | Real market data analysis"
-)
+    st.title("🪙 Meme + Main Coin AI Market Analyzer")
 
-st.caption(
-    "AI signals are estimates, not financial advice. "
-    "Never trade only on an AI-generated signal."
-)
+    st.caption(
+        "Real Market Data | Technical Analysis | AI Score | "
+        "Market Regime | Alerts | Trending | Honeypot"
+    )
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Analysis",
+        "🔥 Trending Tokens",
+        "🛡️ Honeypot Checker",
+        "🔔 Alerts"
+    ])
+
+    with tab1:
+        analysis_tab()
+
+    with tab2:
+        trending_tab()
+
+    with tab3:
+        honeypot_tab()
+
+    with tab4:
+        alerts_tab()
+
+    st.divider()
+
+    st.caption(
+        "⚠️ AI signals are estimates, not guaranteed trading advice. "
+        "Always verify market conditions and manage your risk."
+    )
+
+
+if __name__ == "__main__":
+    main()
