@@ -1,12 +1,11 @@
 
 # ============================================================
 # UTILS / EXCHANGE.PY
-# REAL OHLCV DATA + AUTO SPOT PAIR DISCOVERY
+# REAL OHLCV + AUTO SPOT PAIR DISCOVERY
 # ============================================================
 
 import ccxt
 import pandas as pd
-import streamlit as st
 import time
 
 
@@ -14,35 +13,50 @@ import time
 # EXCHANGE CONFIGURATION
 # ============================================================
 
-EXCHANGE_MAP = {
-    "Binance": ccxt.binance,
-    "Bybit": ccxt.bybit,
-    "KuCoin": ccxt.kucoin,
-    "Kraken": ccxt.kraken,
-    "Coinbase": ccxt.coinbase,
-    "MEXC": ccxt.mexc,
-    "Bitget": ccxt.bitget,
-    "OKX": ccxt.okx,
-    "Gate.io": ccxt.gateio,
-    "HTX": ccxt.htx,
+EXCHANGE_NAMES = {
+    "Binance": ["binance"],
+    "Bybit": ["bybit"],
+    "KuCoin": ["kucoin"],
+    "Kraken": ["kraken"],
+    "Coinbase": ["coinbase", "coinbaseadvanced"],
+    "MEXC": ["mexc"],
+    "Bitget": ["bitget"],
+    "OKX": ["okx"],
+    "Gate.io": ["gate", "gateio"],
+    "HTX": ["htx", "huobi"],
 }
 
 
+def _load_exchange_classes():
+    """Load only exchange classes supported by installed CCXT."""
+
+    available = {}
+
+    for display_name, possible_ids in EXCHANGE_NAMES.items():
+
+        for exchange_id in possible_ids:
+
+            exchange_class = getattr(
+                ccxt,
+                exchange_id,
+                None
+            )
+
+            if exchange_class is not None:
+                available[display_name] = exchange_class
+                break
+
+    return available
+
+
+EXCHANGE_MAP = _load_exchange_classes()
+
+
 SUPPORTED_TIMEFRAMES = [
-    "1m",
-    "3m",
-    "5m",
-    "10m",
-    "15m",
-    "30m",
-    "1h",
-    "2h",
-    "4h",
-    "6h",
-    "8h",
-    "12h",
-    "1d",
-    "1w",
+    "1m", "3m", "5m", "10m",
+    "15m", "30m", "1h", "2h",
+    "4h", "6h", "8h", "12h",
+    "1d", "1w"
 ]
 
 
@@ -74,18 +88,25 @@ QUOTE_PRIORITY = [
 ]
 
 
+OHLCV_COLUMNS = [
+    "timestamp",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+]
+
+
 # ============================================================
 # CREATE EXCHANGE
 # ============================================================
 
 def create_exchange(exchange_name):
-    """
-    Create CCXT exchange instance.
-    """
 
     if exchange_name not in EXCHANGE_MAP:
         raise ValueError(
-            f"Unsupported exchange: {exchange_name}"
+            f"Exchange not supported by installed CCXT: {exchange_name}"
         )
 
     exchange_class = EXCHANGE_MAP[exchange_name]
@@ -102,37 +123,23 @@ def create_exchange(exchange_name):
 
 
 # ============================================================
-# NORMALIZE OHLCV DATA
+# NORMALIZE OHLCV
 # ============================================================
 
 def normalize_exchange_ohlcv(ohlcv):
-    """
-    Convert raw CCXT OHLCV into clean DataFrame.
-
-    Columns:
-    timestamp, open, high, low, close, volume
-    """
-
-    columns = [
-        "timestamp",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-    ]
 
     if not ohlcv:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=OHLCV_COLUMNS)
 
     try:
+
         df = pd.DataFrame(
             ohlcv,
-            columns=columns
+            columns=OHLCV_COLUMNS
         )
 
         if df.empty:
-            return df
+            return pd.DataFrame(columns=OHLCV_COLUMNS)
 
         df["timestamp"] = pd.to_numeric(
             df["timestamp"],
@@ -154,17 +161,10 @@ def normalize_exchange_ohlcv(ohlcv):
             )
 
         df = df.dropna(
-            subset=[
-                "timestamp",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
+            subset=OHLCV_COLUMNS
         )
 
-        # Reject invalid price and volume values.
+        # Validate price and volume.
         df = df[
             (df["open"] > 0)
             & (df["high"] > 0)
@@ -173,7 +173,7 @@ def normalize_exchange_ohlcv(ohlcv):
             & (df["volume"] >= 0)
         ]
 
-        # Validate OHLC relationships.
+        # Validate OHLC relationship.
         df = df[
             (df["high"] >= df["low"])
             & (df["high"] >= df["open"])
@@ -182,27 +182,30 @@ def normalize_exchange_ohlcv(ohlcv):
             & (df["low"] <= df["close"])
         ]
 
-        # Convert Unix milliseconds to UTC datetime.
         df["timestamp"] = pd.to_datetime(
             df["timestamp"],
             unit="ms",
             utc=True,
-            errors="coerce",
+            errors="coerce"
         )
 
-        df = df.dropna(subset=["timestamp"])
+        df = df.dropna(
+            subset=["timestamp"]
+        )
 
         df = df.drop_duplicates(
             subset=["timestamp"],
             keep="last"
         )
 
-        df = df.sort_values("timestamp")
+        df = df.sort_values(
+            "timestamp"
+        )
 
         return df.reset_index(drop=True)
 
     except Exception:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=OHLCV_COLUMNS)
 
 
 # ============================================================
@@ -214,9 +217,6 @@ def remove_incomplete_candle(
     df,
     interval
 ):
-    """
-    Remove the latest candle if it has not closed yet.
-    """
 
     if df is None or df.empty:
         return df
@@ -225,6 +225,7 @@ def remove_incomplete_candle(
         return df
 
     try:
+
         timeframe_ms = TIMEFRAME_MILLISECONDS[interval]
 
         last_timestamp = pd.Timestamp(
@@ -244,7 +245,6 @@ def remove_incomplete_candle(
             candle_start_ms + timeframe_ms
         )
 
-        # Use exchange server time where available.
         try:
             current_time_ms = exchange.fetch_time()
 
@@ -254,7 +254,7 @@ def remove_incomplete_candle(
         except Exception:
             current_time_ms = int(time.time() * 1000)
 
-        # Small safety margin for exchange synchronization.
+        # Keep only fully closed candles.
         if candle_close_ms > current_time_ms - 1000:
             df = df.iloc[:-1].copy()
 
@@ -265,19 +265,16 @@ def remove_incomplete_candle(
 
 
 # ============================================================
-# VALIDATE EXCHANGE SYMBOL
+# VALIDATE SPOT SYMBOL
 # ============================================================
 
 def validate_exchange_symbol(
     exchange,
     symbol
 ):
-    """
-    Check whether a trading symbol exists
-    and is an active spot market.
-    """
 
     try:
+
         markets = exchange.load_markets()
 
         if symbol not in markets:
@@ -286,6 +283,9 @@ def validate_exchange_symbol(
         market = markets[symbol]
 
         if market.get("active") is False:
+            return False
+
+        if market.get("spot") is False:
             return False
 
         if market.get("swap"):
@@ -297,9 +297,6 @@ def validate_exchange_symbol(
         if market.get("contract"):
             return False
 
-        if market.get("spot") is False:
-            return False
-
         return True
 
     except Exception:
@@ -307,7 +304,7 @@ def validate_exchange_symbol(
 
 
 # ============================================================
-# FETCH OHLCV FROM EXCHANGE
+# FETCH EXCHANGE OHLCV
 # ============================================================
 
 def get_candles_from_exchange(
@@ -319,13 +316,6 @@ def get_candles_from_exchange(
     show_warnings=True,
     as_series=False,
 ):
-    """
-    Fetch real OHLCV candles from an exchange.
-
-    Returns:
-        DataFrame by default.
-        Close-price Series if as_series=True.
-    """
 
     try:
 
@@ -337,7 +327,7 @@ def get_candles_from_exchange(
         if interval == "10m":
             raise ValueError(
                 "10m is not a native timeframe. "
-                "Use get_auto_ohlcv() for real 10m candles."
+                "Use get_auto_ohlcv()."
             )
 
         if interval not in SUPPORTED_TIMEFRAMES:
@@ -350,20 +340,18 @@ def get_candles_from_exchange(
                 "Limit must be a positive integer."
             )
 
-        if limit > 1000:
-            limit = 1000
+        limit = min(limit, 1000)
 
-        exchange = create_exchange(exchange_name)
+        exchange = create_exchange(
+            exchange_name
+        )
 
-        # Check exchange timeframe support.
         if exchange.timeframes:
             if interval not in exchange.timeframes:
                 raise ValueError(
-                    f"{exchange_name} does not support "
-                    f"{interval} timeframe."
+                    f"{exchange_name} does not support {interval}."
                 )
 
-        # Load and validate market.
         if not validate_exchange_symbol(
             exchange,
             symbol
@@ -372,11 +360,10 @@ def get_candles_from_exchange(
                 f"Invalid or inactive spot pair: {symbol}"
             )
 
-        # Fetch actual exchange OHLCV.
         raw_ohlcv = exchange.fetch_ohlcv(
             symbol,
             timeframe=interval,
-            limit=limit,
+            limit=limit
         )
 
         if not raw_ohlcv:
@@ -384,7 +371,9 @@ def get_candles_from_exchange(
                 "Exchange returned no OHLCV data."
             )
 
-        df = normalize_exchange_ohlcv(raw_ohlcv)
+        df = normalize_exchange_ohlcv(
+            raw_ohlcv
+        )
 
         if df.empty:
             raise ValueError(
@@ -414,6 +403,7 @@ def get_candles_from_exchange(
 
         if show_warnings:
             try:
+                import streamlit as st
                 st.warning(
                     f"{exchange_name} data error: {str(exc)}"
                 )
@@ -423,31 +413,19 @@ def get_candles_from_exchange(
         if as_series:
             return pd.Series(dtype="float64")
 
-        return pd.DataFrame(
-            columns=[
-                "timestamp",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        )
+        return pd.DataFrame(columns=OHLCV_COLUMNS)
 
 
 # ============================================================
-# LEGACY PRICE SERIES FUNCTION
+# LEGACY PRICE SERIES
 # ============================================================
 
 def get_exchange_price_series(
     exchange_name,
     symbol,
     interval="1d",
-    limit=100,
+    limit=100
 ):
-    """
-    Backward-compatible close-price Series.
-    """
 
     return get_candles_from_exchange(
         exchange_name=exchange_name,
@@ -456,20 +434,15 @@ def get_exchange_price_series(
         limit=limit,
         drop_incomplete=True,
         show_warnings=True,
-        as_series=True,
+        as_series=True
     )
 
 
 # ============================================================
-# RESAMPLE REAL 5M CANDLES INTO 10M
+# RESAMPLE REAL 5M INTO REAL 10M
 # ============================================================
 
 def resample_exchange_ohlcv_10m(df):
-    """
-    Build 10m candles from two complete real 5m candles.
-
-    No synthetic prices or volumes are generated.
-    """
 
     if df is None or df.empty:
         return None
@@ -491,7 +464,7 @@ def resample_exchange_ohlcv_10m(df):
             "10min",
             label="left",
             closed="left",
-            origin="epoch",
+            origin="epoch"
         )
 
         result = grouped.agg({
@@ -499,12 +472,12 @@ def resample_exchange_ohlcv_10m(df):
             "high": "max",
             "low": "min",
             "close": "last",
-            "volume": "sum",
+            "volume": "sum"
         })
 
         counts = grouped["close"].count()
 
-        # Only use groups containing exactly two 5m candles.
+        # Only complete groups of two 5m candles.
         result = result[
             counts == 2
         ].dropna()
@@ -514,43 +487,21 @@ def resample_exchange_ohlcv_10m(df):
 
         result = result.reset_index()
 
-        return result[
-            [
-                "timestamp",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        ]
+        return result[OHLCV_COLUMNS]
 
     except Exception:
         return None
 
 
 # ============================================================
-# AUTOMATIC SPOT PAIR DISCOVERY
+# FIND EXACT SPOT PAIRS
 # ============================================================
 
 def find_spot_pairs(
     base_symbol,
     exchanges=None,
-    quote_priority=None,
+    quote_priority=None
 ):
-    """
-    Search supported exchanges for exact base currency.
-
-    Example:
-        PEPE -> PEPE/USDT
-        BTC  -> BTC/USDT
-
-    Returns:
-        [
-            ("Binance", "PEPE/USDT"),
-            ("Bybit", "PEPE/USDT")
-        ]
-    """
 
     base = str(
         base_symbol or ""
@@ -559,7 +510,7 @@ def find_spot_pairs(
     if not base:
         return []
 
-    # Do not accept a pair or contract as a base symbol.
+    # Extract base if a simple pair was supplied.
     if "/" in base:
         base = base.split("/")[0]
 
@@ -611,11 +562,13 @@ def find_spot_pairs(
                     market.get("quote", "")
                 ).upper()
 
-                # Exact base symbol matching only.
                 if market_base != base:
                     continue
 
                 if market.get("active") is False:
+                    continue
+
+                if market.get("spot") is False:
                     continue
 
                 if market.get("swap"):
@@ -625,9 +578,6 @@ def find_spot_pairs(
                     continue
 
                 if market.get("contract"):
-                    continue
-
-                if market.get("spot") is False:
                     continue
 
                 if market_quote not in quote_priority:
@@ -665,34 +615,30 @@ def get_auto_ohlcv(
     base_symbol,
     interval="5m",
     limit=200,
-    exchanges=None,
+    exchanges=None
 ):
-    """
-    Automatically discover a real spot pair
-    and fetch OHLCV from supported exchanges.
-
-    Returns:
-        df, metadata
-
-    No synthetic candles are used.
-    """
-
-    requested_interval = interval
 
     if interval not in SUPPORTED_TIMEFRAMES:
         return None, {
             "success": False,
-            "reason": f"Unsupported timeframe: {interval}",
+            "reason": f"Unsupported timeframe: {interval}"
         }
 
-    # 10m is constructed only from actual 5m candles.
+    if not isinstance(limit, int) or limit < 30:
+        return None, {
+            "success": False,
+            "reason": "At least 30 candles are required."
+        }
+
+    requested_interval = interval
+
     fetch_interval = (
         "5m" if interval == "10m" else interval
     )
 
     pairs = find_spot_pairs(
         base_symbol=base_symbol,
-        exchanges=exchanges,
+        exchanges=exchanges
     )
 
     if not pairs:
@@ -700,7 +646,7 @@ def get_auto_ohlcv(
             "success": False,
             "reason": (
                 f"No active spot pair found for {base_symbol}."
-            ),
+            )
         }
 
     errors = []
@@ -709,7 +655,7 @@ def get_auto_ohlcv(
 
         try:
 
-            requested_limit = (
+            fetch_limit = (
                 min(limit * 2 + 4, 1000)
                 if interval == "10m"
                 else min(limit, 1000)
@@ -719,9 +665,9 @@ def get_auto_ohlcv(
                 exchange_name=exchange_name,
                 symbol=symbol,
                 interval=fetch_interval,
-                limit=requested_limit,
+                limit=fetch_limit,
                 drop_incomplete=True,
-                show_warnings=False,
+                show_warnings=False
             )
 
             if df is None or df.empty:
@@ -731,10 +677,7 @@ def get_auto_ohlcv(
                 continue
 
             if requested_interval == "10m":
-
-                df = resample_exchange_ohlcv_10m(
-                    df
-                )
+                df = resample_exchange_ohlcv_10m(df)
 
             if df is None or df.empty:
                 errors.append(
@@ -747,7 +690,6 @@ def get_auto_ohlcv(
                 drop=True
             )
 
-            # Minimum candles for technical analysis.
             if len(df) < 30:
                 errors.append(
                     f"{exchange_name} {symbol}: "
@@ -761,7 +703,7 @@ def get_auto_ohlcv(
                 "symbol": symbol,
                 "interval": requested_interval,
                 "candles": len(df),
-                "source": "Real Exchange OHLCV",
+                "source": "Real Exchange OHLCV"
             }
 
             return df, metadata
@@ -776,24 +718,20 @@ def get_auto_ohlcv(
     return None, {
         "success": False,
         "reason": (
-            "All discovered pairs failed "
-            "to return valid OHLCV."
+            "All discovered pairs failed to return valid OHLCV."
         ),
-        "errors": errors[:10],
+        "errors": errors[:10]
     }
 
 
 # ============================================================
-# SIMPLE EXCHANGE PRICE HELPER
+# CURRENT EXCHANGE PRICE
 # ============================================================
 
 def get_exchange_current_price(
     exchange_name,
-    symbol,
+    symbol
 ):
-    """
-    Get current ticker price from an exchange.
-    """
 
     try:
 
@@ -828,15 +766,12 @@ def get_exchange_current_price(
 
 
 # ============================================================
-# EXCHANGE CONNECTION TEST
+# TEST EXCHANGE CONNECTION
 # ============================================================
 
 def test_exchange_connection(
     exchange_name
 ):
-    """
-    Test public API connection.
-    """
 
     try:
 
@@ -849,7 +784,7 @@ def test_exchange_connection(
         return {
             "success": True,
             "exchange": exchange_name,
-            "message": "Exchange connection successful.",
+            "message": "Exchange connection successful."
         }
 
     except Exception as exc:
@@ -857,7 +792,7 @@ def test_exchange_connection(
         return {
             "success": False,
             "exchange": exchange_name,
-            "message": str(exc),
+            "message": str(exc)
         }
 
 
