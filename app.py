@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -194,7 +195,9 @@ def normalize_price_series(series):
     try:
         series = pd.Series(series)
         series = pd.to_numeric(series, errors="coerce")
-        series = series.replace([np.inf, -np.inf], np.nan)
+        series = series.replace(
+            [np.inf, -np.inf], np.nan
+        )
         series = series.dropna()
         series = series[series > 0]
 
@@ -268,7 +271,6 @@ def normalize_ohlcv(df):
         (df["volume"] >= 0)
     ]
 
-    # Validate candle geometry
     df = df[
         (df["high"] >= df["low"]) &
         (df["high"] >= df["open"]) &
@@ -277,18 +279,14 @@ def normalize_ohlcv(df):
         (df["low"] <= df["close"])
     ]
 
-    # Remove duplicate timestamps
     if df["timestamp"].notna().any():
         df = df.drop_duplicates(
             subset=["timestamp"],
             keep="last"
         )
-
         df = df.sort_values("timestamp")
 
-    df = df.reset_index(drop=True)
-
-    return df
+    return df.reset_index(drop=True)
 
 
 def format_price(value):
@@ -373,7 +371,6 @@ def safe_api_request(url, params=None, headers=None):
         )
 
         response.raise_for_status()
-
         return response.json()
 
     except requests.exceptions.Timeout:
@@ -387,6 +384,8 @@ def safe_api_request(url, params=None, headers=None):
 
     except ValueError:
         return None
+
+
 # ============================================================
 # COINGECKO
 # ============================================================
@@ -478,26 +477,16 @@ def get_dex_token(address):
         return None
 
     data = safe_api_request(
-        f"{DEXSCREENER_API}/token-pairs/v1/"
-        f"solana/{address}"
+        f"{DEXSCREENER_API}/latest/dex/tokens/{address}"
     )
-
-    # Try the general endpoint if the Solana endpoint
-    # doesn't return usable data.
-    if not data:
-        data = safe_api_request(
-            f"{DEXSCREENER_API}/latest/dex/tokens/{address}"
-        )
 
     if not data:
         return None
 
     if isinstance(data, dict):
         pairs = data.get("pairs", [])
-
     elif isinstance(data, list):
         pairs = data
-
     else:
         pairs = []
 
@@ -507,7 +496,7 @@ def get_dex_token(address):
     pairs = sorted(
         pairs,
         key=lambda p: safe_float(
-            p.get("liquidity", {}).get("usd"), 0
+            (p.get("liquidity") or {}).get("usd"), 0
         ) or 0,
         reverse=True
     )
@@ -532,28 +521,14 @@ def dex_pair_to_market(pair):
             "symbol": base.get("symbol", "UNKNOWN"),
             "address": base.get("address"),
             "price": safe_float(pair.get("priceUsd")),
-            "market_cap": safe_float(
-                pair.get("marketCap")
-            ),
+            "market_cap": safe_float(pair.get("marketCap")),
             "fdv": safe_float(pair.get("fdv")),
-            "liquidity": safe_float(
-                liquidity.get("usd")
-            ),
-            "volume_24h": safe_float(
-                volume.get("h24")
-            ),
-            "price_change_24h": safe_float(
-                price_change.get("h24")
-            ),
-            "price_change_6h": safe_float(
-                price_change.get("h6")
-            ),
-            "price_change_1h": safe_float(
-                price_change.get("h1")
-            ),
-            "price_change_5m": safe_float(
-                price_change.get("m5")
-            ),
+            "liquidity": safe_float(liquidity.get("usd")),
+            "volume_24h": safe_float(volume.get("h24")),
+            "price_change_24h": safe_float(price_change.get("h24")),
+            "price_change_6h": safe_float(price_change.get("h6")),
+            "price_change_1h": safe_float(price_change.get("h1")),
+            "price_change_5m": safe_float(price_change.get("m5")),
             "chain": pair.get("chainId"),
             "dex": pair.get("dexId"),
             "pair_address": pair.get("pairAddress"),
@@ -570,7 +545,6 @@ def dex_pair_to_market(pair):
 
     except Exception:
         return None
-
 
 # ============================================================
 # EXCHANGE OHLCV
@@ -589,11 +563,7 @@ def fetch_exchange_candles(
         return pd.DataFrame()
 
     try:
-        fetch_limit = limit
-
-        # 10m requires pairs of 5m candles
-        if interval == "10m":
-            fetch_limit = limit * 2
+        fetch_limit = limit * 2 if interval == "10m" else limit
 
         raw = get_candles_from_exchange(
             exchange_name,
@@ -610,14 +580,9 @@ def fetch_exchange_candles(
         raw = normalize_ohlcv(raw)
 
         if interval == "10m":
-            if PRICE_DATA_AVAILABLE:
-                raw = resample_ohlcv_10m(raw)
-            else:
-                raw = resample_local_10m(raw)
+            raw = resample_local_10m(raw)
 
-        raw = normalize_ohlcv(raw)
-
-        return raw.tail(limit).reset_index(drop=True)
+        return normalize_ohlcv(raw).tail(limit).reset_index(drop=True)
 
     except Exception:
         return pd.DataFrame()
@@ -630,25 +595,36 @@ def fetch_exchange_candles(
 def resample_local_10m(df):
     df = normalize_ohlcv(df)
 
-    if df.empty or "timestamp" not in df.columns:
+    if df.empty or len(df) < 2:
         return pd.DataFrame()
 
-    if len(df) < 2:
+    if "timestamp" not in df.columns:
         return pd.DataFrame()
 
-    df = df.set_index("timestamp")
+    if df["timestamp"].isna().any():
+        return pd.DataFrame()
 
     try:
-        result = df.resample(
+        data = df.set_index("timestamp").sort_index()
+
+        grouped = data.resample(
             "10min",
-            origin="epoch"
-        ).agg({
+            origin="epoch",
+            label="left",
+            closed="left"
+        )
+
+        result = grouped.agg({
             "open": "first",
             "high": "max",
             "low": "min",
             "close": "last",
             "volume": "sum"
         })
+
+        # Only accept complete pairs of 5-minute candles.
+        counts = grouped["close"].count()
+        result = result[counts == 2]
 
         result = result.dropna(
             subset=["open", "high", "low", "close"]
@@ -679,19 +655,17 @@ BINANCE_INTERVAL_MAP = {
 }
 
 
-def fetch_binance_direct(symbol, interval="5m", limit=200):
+def fetch_binance_direct(
+    symbol,
+    interval="5m",
+    limit=200
+):
     symbol = str(symbol).upper().replace("/", "").strip()
 
-    if not symbol:
+    if not symbol or interval not in BINANCE_INTERVAL_MAP:
         return pd.DataFrame()
 
-    if interval not in BINANCE_INTERVAL_MAP:
-        return pd.DataFrame()
-
-    fetch_limit = limit
-
-    if interval == "10m":
-        fetch_limit = min(limit * 2, 1000)
+    fetch_limit = min(limit * 2, 1000) if interval == "10m" else limit
 
     data = safe_api_request(
         f"{BINANCE_API}/klines",
@@ -708,7 +682,10 @@ def fetch_binance_direct(symbol, interval="5m", limit=200):
     try:
         df = pd.DataFrame(data)
 
-        df = df.iloc[:, :6]
+        if df.empty or df.shape[1] < 6:
+            return pd.DataFrame()
+
+        df = df.iloc[:, :6].copy()
 
         df.columns = [
             "timestamp",
@@ -725,9 +702,7 @@ def fetch_binance_direct(symbol, interval="5m", limit=200):
             utc=True
         )
 
-        for col in [
-            "open", "high", "low", "close", "volume"
-        ]:
+        for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(
                 df[col],
                 errors="coerce"
@@ -735,11 +710,11 @@ def fetch_binance_direct(symbol, interval="5m", limit=200):
 
         df = normalize_ohlcv(df)
 
-        # Remove the currently forming Binance candle.
-        if not df.empty and len(df) > 1:
+        # Remove the currently forming candle.
+        if not df.empty:
             now = pd.Timestamp.now(tz="UTC")
 
-            timeframe_seconds = {
+            seconds_map = {
                 "1m": 60,
                 "3m": 180,
                 "5m": 300,
@@ -751,9 +726,7 @@ def fetch_binance_direct(symbol, interval="5m", limit=200):
                 "1d": 86400
             }
 
-            candle_seconds = timeframe_seconds.get(
-                interval, 300
-            )
+            candle_seconds = seconds_map.get(interval, 300)
 
             candle_end = (
                 df.iloc[-1]["timestamp"] +
@@ -784,7 +757,6 @@ def fetch_preferred_ohlcv(
 ):
     df = pd.DataFrame()
 
-    # First try selected exchange
     if EXCHANGE_AVAILABLE:
         df = fetch_exchange_candles(
             exchange_name,
@@ -793,7 +765,6 @@ def fetch_preferred_ohlcv(
             limit
         )
 
-    # Fallback to Binance direct API
     if df is None or df.empty:
         df = fetch_binance_direct(
             symbol,
@@ -826,6 +797,7 @@ def validate_ohlcv_data(df, min_rows=35):
 def get_ohlcv_source_label(exchange_name):
     return f"{exchange_name} Real OHLCV"
 
+
 # ============================================================
 # PRICE-ONLY ANALYSIS
 # ============================================================
@@ -853,112 +825,76 @@ def calculate_price_only_indicators(prices):
         "source_type": "Price-only"
     }
 
-    if len(prices) < 20:
+    if prices.empty:
         return result
 
     result["price"] = safe_float(prices.iloc[-1])
 
-    try:
-        if TECHNICALS_AVAILABLE:
-            rsi = calculate_rsi(prices, 14)
+    if not TECHNICALS_AVAILABLE:
+        result["source_type"] = "Price-only / Technicals unavailable"
+        return result
 
-            if len(rsi) > 0:
+    try:
+        if len(prices) >= 14:
+            rsi = calculate_rsi(prices, 14)
+            if len(rsi):
                 result["rsi"] = safe_float(rsi.iloc[-1])
 
+        if len(prices) >= 20:
             ema20 = calculate_ema(prices, 20)
-            ema50 = calculate_ema(prices, 50)
-
-            if len(ema20):
-                result["ema20"] = safe_float(
-                    ema20.iloc[-1]
-                )
-
-            if len(ema50):
-                result["ema50"] = safe_float(
-                    ema50.iloc[-1]
-                )
-
-            if len(prices) >= 200:
-                ema200 = calculate_ema(prices, 200)
-                result["ema200"] = safe_float(
-                    ema200.iloc[-1]
-                )
-
-            macd_result = calculate_macd(prices)
-
-            if isinstance(macd_result, (tuple, list)):
-                if len(macd_result) >= 3:
-                    result["macd"] = safe_float(
-                        macd_result[0].iloc[-1]
-                    )
-                    result["macd_signal"] = safe_float(
-                        macd_result[1].iloc[-1]
-                    )
-                    result["macd_histogram"] = safe_float(
-                        macd_result[2].iloc[-1]
-                    )
+            result["ema20"] = safe_float(ema20.iloc[-1])
 
             bb = calculate_bollinger_bands(prices)
-
             if isinstance(bb, (tuple, list)) and len(bb) >= 3:
-                result["bb_upper"] = safe_float(
-                    bb[0].iloc[-1]
-                )
-                result["bb_middle"] = safe_float(
-                    bb[1].iloc[-1]
-                )
-                result["bb_lower"] = safe_float(
-                    bb[2].iloc[-1]
-                )
+                result["bb_upper"] = safe_float(bb[0].iloc[-1])
+                result["bb_middle"] = safe_float(bb[1].iloc[-1])
+                result["bb_lower"] = safe_float(bb[2].iloc[-1])
 
             sma20 = calculate_sma(prices, 20)
+            result["sma20"] = safe_float(sma20.iloc[-1])
 
-            if len(sma20):
-                result["sma20"] = safe_float(
-                    sma20.iloc[-1]
+        if len(prices) >= 50:
+            ema50 = calculate_ema(prices, 50)
+            result["ema50"] = safe_float(ema50.iloc[-1])
+
+            sma50 = calculate_sma(prices, 50)
+            result["sma50"] = safe_float(sma50.iloc[-1])
+
+        if len(prices) >= 200:
+            ema200 = calculate_ema(prices, 200)
+            result["ema200"] = safe_float(ema200.iloc[-1])
+
+        if len(prices) >= 35:
+            macd_result = calculate_macd(prices)
+
+            if isinstance(macd_result, (tuple, list)) and len(macd_result) >= 3:
+                result["macd"] = safe_float(macd_result[0].iloc[-1])
+                result["macd_signal"] = safe_float(macd_result[1].iloc[-1])
+                result["macd_histogram"] = safe_float(macd_result[2].iloc[-1])
+
+                hist = result["macd_histogram"]
+
+                if hist is not None:
+                    if hist > 0:
+                        result["histogram_strength"] = "Bullish"
+                    elif hist < 0:
+                        result["histogram_strength"] = "Bearish"
+                    else:
+                        result["histogram_strength"] = "Neutral"
+
+        if len(prices) >= 30 and result["rsi"] is not None:
+            try:
+                divergence = detect_rsi_divergence(
+                    prices,
+                    rsi,
+                    lookback=20
                 )
+                result["divergence"] = divergence
+            except Exception:
+                pass
 
-            if len(prices) >= 50:
-                sma50 = calculate_sma(prices, 50)
-
-                if len(sma50):
-                    result["sma50"] = safe_float(
-                        sma50.iloc[-1]
-                    )
-
-            if (
-                result["macd_histogram"] is not None
-                and result["macd_histogram"] != 0
-            ):
-                result["histogram_strength"] = (
-                    "Bullish" if
-                    result["macd_histogram"] > 0
-                    else "Bearish"
-                )
-
-            if (
-                result["rsi"] is not None
-                and len(prices) >= 30
-            ):
-                try:
-                    divergence = detect_rsi_divergence(
-                        prices,
-                        rsi,
-                        lookback=20
-                    )
-
-                    result["divergence"] = divergence
-
-                except Exception:
-                    pass
-
-        else:
-            result["source_type"] = (
-                "Price-only / Technicals unavailable"
-            )
-
-    except Exception:
-        pass
+    except Exception as e:
+        result["analysis_error"] = str(e)
 
     return result
 
@@ -985,7 +921,7 @@ def calculate_real_ohlcv_analysis(df):
         "atr": None,
         "volume_spike": None,
         "volume_ratio": None,
-        "pattern": None,
+        "pattern": "No Pattern",
         "support": None,
         "resistance": None,
         "price_change": None,
@@ -1002,92 +938,80 @@ def calculate_real_ohlcv_analysis(df):
         previous = safe_float(df["close"].iloc[-2])
         current = safe_float(df["close"].iloc[-1])
 
-        if previous and current is not None:
+        if previous is not None and previous > 0 and current is not None:
             result["price_change"] = (
                 (current - previous) / previous
             ) * 100
 
     if not TECHNICALS_AVAILABLE:
+        result["analysis_error"] = (
+            "Technicals module unavailable: " + TECH_IMPORT_ERROR
+        )
         return result
 
     try:
         close = clean_series(df["close"])
 
+        # RSI
         if len(close) >= 14:
             rsi = calculate_rsi(close, 14)
 
             if len(rsi):
-                result["rsi"] = safe_float(
-                    rsi.iloc[-1]
-                )
+                result["rsi"] = safe_float(rsi.iloc[-1])
 
+        # EMA
         if len(close) >= 20:
             ema20 = calculate_ema(close, 20)
-            result["ema20"] = safe_float(
-                ema20.iloc[-1]
-            )
+            result["ema20"] = safe_float(ema20.iloc[-1])
 
         if len(close) >= 50:
             ema50 = calculate_ema(close, 50)
-            result["ema50"] = safe_float(
-                ema50.iloc[-1]
-            )
+            result["ema50"] = safe_float(ema50.iloc[-1])
 
         if len(close) >= 200:
             ema200 = calculate_ema(close, 200)
-            result["ema200"] = safe_float(
-                ema200.iloc[-1]
-            )
+            result["ema200"] = safe_float(ema200.iloc[-1])
 
+        # MACD
         if len(close) >= 35:
             macd_result = calculate_macd(close)
 
-            if isinstance(macd_result, (tuple, list)):
-                if len(macd_result) >= 3:
-                    result["macd"] = safe_float(
-                        macd_result[0].iloc[-1]
-                    )
-                    result["macd_signal"] = safe_float(
-                        macd_result[1].iloc[-1]
-                    )
-                    result["macd_histogram"] = safe_float(
-                        macd_result[2].iloc[-1]
-                    )
+            if isinstance(macd_result, (tuple, list)) and len(macd_result) >= 3:
+                result["macd"] = safe_float(macd_result[0].iloc[-1])
+                result["macd_signal"] = safe_float(macd_result[1].iloc[-1])
+                result["macd_histogram"] = safe_float(macd_result[2].iloc[-1])
 
+        # Bollinger Bands
         if len(close) >= 20:
             bb = calculate_bollinger_bands(close)
 
             if isinstance(bb, (tuple, list)) and len(bb) >= 3:
-                result["bb_upper"] = safe_float(
-                    bb[0].iloc[-1]
-                )
-                result["bb_middle"] = safe_float(
-                    bb[1].iloc[-1]
-                )
-                result["bb_lower"] = safe_float(
-                    bb[2].iloc[-1]
-                )
+                result["bb_upper"] = safe_float(bb[0].iloc[-1])
+                result["bb_middle"] = safe_float(bb[1].iloc[-1])
+                result["bb_lower"] = safe_float(bb[2].iloc[-1])
 
+        # ATR
         if len(df) >= 15:
             atr = calculate_atr(df, 14)
 
             if atr is not None and len(atr):
-                result["atr"] = safe_float(
-                    atr.iloc[-1]
-                )
+                result["atr"] = safe_float(atr.iloc[-1])
 
+        # Volume analysis
         if len(df) >= 21:
-            spike = detect_volume_spike(
-                df, period=20, multiplier=1.5
+            result["volume_spike"] = detect_volume_spike(
+                df,
+                period=20,
+                multiplier=1.5
             )
-
-            result["volume_spike"] = spike
 
             volume_ratio = calculate_volume_ratio(
-                df, period=20
+                df,
+                period=20
             )
 
-            if isinstance(volume_ratio, (pd.Series, list)):
+            # Current technicals.py returns a scalar float.
+            if isinstance(volume_ratio, (pd.Series, list, tuple)):
                 if len(volume_ratio):
                     result["volume_ratio"] = safe_float(
                         volume_ratio.iloc[-1]
@@ -1095,25 +1019,36 @@ def calculate_real_ohlcv_analysis(df):
                         else volume_ratio[-1]
                     )
             else:
-                result["volume_ratio"] = safe_float(
-                    volume_ratio
-                )
+                result["volume_ratio"] = safe_float(volume_ratio)
+
+        # ====================================================
+        # CANDLESTICK PATTERN — UPDATED FIX
+        # ====================================================
 
         if len(df) >= 3:
             patterns = detect_candlestick_patterns(df)
 
-            if patterns is not None:
-                if isinstance(patterns, pd.DataFrame):
-                    if len(patterns):
-                        result["pattern"] = patterns.iloc[-1]
-                elif isinstance(patterns, (list, tuple)):
-                    result["pattern"] = patterns[-1]
-                else:
-                    result["pattern"] = patterns
+            if (
+                patterns is not None
+                and isinstance(patterns, pd.DataFrame)
+                and not patterns.empty
+                and "pattern" in patterns.columns
+            ):
+                latest_pattern = patterns["pattern"].iloc[-1]
 
+            elif isinstance(patterns, (list, tuple)) and len(patterns):
+                latest_pattern = patterns[-1]
+
+            else:
+                latest_pattern = "No Pattern"
+
+            result["pattern"] = latest_pattern
+
+        # Support and Resistance
         if len(close) >= 20:
             sr = find_support_resistance(
-                close, window=min(50, len(close))
+                close,
+                window=min(50, len(close))
             )
 
             if isinstance(sr, (tuple, list)) and len(sr) >= 2:
@@ -1169,7 +1104,8 @@ def calculate_ai_engine(df):
             return output
 
         score_result = calculate_ai_score(
-            df, indicators=indicators
+            df,
+            indicators=indicators
         )
 
         if not isinstance(score_result, dict):
@@ -1180,9 +1116,9 @@ def calculate_ai_engine(df):
             score_result.get("score")
         )
 
-        output["direction"] = score_result.get(
-            "direction", "NEUTRAL"
-        )
+        output["direction"] = str(
+            score_result.get("direction", "NEUTRAL")
+        ).upper()
 
         output["confidence"] = safe_float(
             score_result.get("confidence")
@@ -1192,22 +1128,21 @@ def calculate_ai_engine(df):
             score_result.get("coverage")
         )
 
-        output["signals"] = score_result.get(
-            "signals", {}
-        )
-
+        output["signals"] = score_result.get("signals", {})
         output["indicators"] = indicators
 
         try:
             output["regime"] = detect_market_regime(
-                df, indicators=indicators
+                df,
+                indicators=indicators
             )
         except Exception:
             output["regime"] = None
 
         try:
             output["report"] = generate_ai_report(
-                df, result=score_result
+                df,
+                result=score_result
             )
         except Exception:
             output["report"] = None
@@ -1216,6 +1151,7 @@ def calculate_ai_engine(df):
         output["error"] = str(e)
 
     return output
+
 # ============================================================
 # INDICATOR DISPLAY
 # ============================================================
@@ -1269,20 +1205,13 @@ def show_price_chart(df, price_series=None):
         else:
             chart_df = df["close"]
 
-        st.line_chart(
-            chart_df,
-            height=350
-        )
-
+        st.line_chart(chart_df, height=350)
         return
 
     prices = normalize_price_series(price_series)
 
     if not prices.empty:
-        st.line_chart(
-            prices,
-            height=350
-        )
+        st.line_chart(prices, height=350)
     else:
         st.info("Chart data unavailable.")
 
@@ -1324,7 +1253,7 @@ def show_ohlcv_analysis(data):
 
     pattern = data.get("pattern")
 
-    if pattern is None:
+    if pattern is None or pattern == "No Pattern":
         st.info("No pattern detected.")
     else:
         st.write(pattern)
@@ -1333,7 +1262,7 @@ def show_ohlcv_analysis(data):
 
     if spike is not None:
         st.write("**Volume Spike:**")
-        st.write(spike)
+        st.write("Detected" if spike else "Not detected")
 
 
 # ============================================================
@@ -1389,11 +1318,7 @@ def show_ai_analysis(result):
 
     if isinstance(signals, dict) and signals:
         st.write("**Signal Breakdown:**")
-
-        try:
-            st.json(signals)
-        except Exception:
-            st.write(signals)
+        st.json(signals)
 
     report = result.get("report")
 
@@ -1529,11 +1454,13 @@ def show_additional_signals(df, data):
     try:
         close = clean_series(df["close"])
 
-        if len(close) >= 50:
-            crossover = calculate_sma_crossover(close)
-
-            st.write("**SMA Crossover:**")
-            st.write(crossover)
+        if len(close) >= 50 and AI_AVAILABLE:
+            try:
+                crossover = calculate_sma_crossover(close)
+                st.write("**SMA Crossover:**")
+                st.write(crossover)
+            except Exception:
+                pass
 
         if len(close) >= 35:
             histogram = calculate_macd(close)
@@ -1549,18 +1476,15 @@ def show_additional_signals(df, data):
                     st.write("**MACD Histogram Strength:**")
                     st.write(strength)
 
-        if len(df) >= 20:
-            breakout = None
+        if len(close) >= 20 and AI_AVAILABLE:
+            try:
+                breakout = bollinger_breakout_signal(df)
 
-            if AI_AVAILABLE:
-                try:
-                    breakout = bollinger_breakout_signal(df)
-                except Exception:
-                    pass
-
-            if breakout is not None:
-                st.write("**Bollinger Breakout:**")
-                st.write(breakout)
+                if breakout is not None:
+                    st.write("**Bollinger Breakout:**")
+                    st.write(breakout)
+            except Exception:
+                pass
 
     except Exception as e:
         st.warning(
@@ -1583,52 +1507,63 @@ def show_final_decision(
         st.info("Decision unavailable.")
         return
 
-    price = safe_float(
-        ohlcv_analysis.get("price")
-    )
-
-    rsi = safe_float(
-        ohlcv_analysis.get("rsi")
-    )
-
-    macd = safe_float(
-        ohlcv_analysis.get("macd")
-    )
-
+    price = safe_float(ohlcv_analysis.get("price"))
+    rsi = safe_float(ohlcv_analysis.get("rsi"))
+    macd = safe_float(ohlcv_analysis.get("macd"))
     macd_signal_value = safe_float(
         ohlcv_analysis.get("macd_signal")
     )
-
     price_change = safe_float(
         ohlcv_analysis.get("price_change")
     )
-
     volume = safe_float(
         ohlcv_analysis.get("volume_ratio")
     )
 
-    # Prefer the AI engine's directional output
-    ai_direction = None
+    decision = "HOLD"
 
+    # Do not directly display BULLISH/BEARISH as BUY/SELL.
     if ai_result and not ai_result.get("error"):
-        ai_direction = ai_result.get("direction")
+        ai_direction = str(
+            ai_result.get("direction", "NEUTRAL")
+        ).upper()
 
-    if ai_direction:
-        decision = str(ai_direction).upper()
-    else:
-        decision = "HOLD"
+        confidence = safe_float(
+            ai_result.get("confidence")
+        )
+        coverage = safe_float(
+            ai_result.get("coverage")
+        )
 
-        if AI_AVAILABLE:
-            try:
-                decision = ai_decision(
-                    rsi,
-                    macd,
-                    macd_signal_value,
-                    price_change,
-                    volume
-                )
-            except Exception:
-                decision = "HOLD"
+        if (
+            confidence is not None
+            and coverage is not None
+            and confidence >= 60
+            and coverage >= 50
+        ):
+            if ai_direction in ("BULLISH", "BUY"):
+                decision = "BUY"
+            elif ai_direction in ("BEARISH", "SELL"):
+                decision = "SELL"
+
+    # Fallback to the existing decision engine.
+    elif AI_AVAILABLE:
+        try:
+            fallback = ai_decision(
+                rsi,
+                macd,
+                macd_signal_value,
+                price_change,
+                volume
+            )
+
+            fallback = str(fallback).upper()
+
+            if fallback in ("BUY", "SELL", "HOLD"):
+                decision = fallback
+
+        except Exception:
+            decision = "HOLD"
 
     st.markdown(f"### {decision}")
 
@@ -1647,14 +1582,15 @@ def show_final_decision(
     cols[2].metric(
         "Change",
         format_percent(price_change)
-        if price_change is not None
-        else "N/A"
+        if price_change is not None else "N/A"
     )
 
     st.caption(
         "Decision is based on available indicators and data quality. "
         "It is not a guarantee of future price movement."
     )
+
+
 # ============================================================
 # ALERT SYSTEM
 # ============================================================
@@ -1705,8 +1641,7 @@ def alerts_tab():
                 try:
                     target_value = (
                         safe_float(target)
-                        if target.strip()
-                        else None
+                        if target.strip() else None
                     )
 
                     alert_module.add_alert(
@@ -1720,7 +1655,6 @@ def alerts_tab():
 
                 except Exception as e:
                     st.error(str(e))
-
             else:
                 st.warning("Enter a coin symbol.")
 
@@ -1762,7 +1696,6 @@ def trending_tab():
     try:
         if source == "CoinGecko":
             tokens = fetch_coingecko_trending()
-
         else:
             tokens = fetch_dexscreener_trending()
 
@@ -1779,9 +1712,7 @@ def trending_tab():
 
         elif isinstance(tokens, list):
             for index, token in enumerate(tokens):
-                with st.expander(
-                    f"Trending #{index + 1}"
-                ):
+                with st.expander(f"Trending #{index + 1}"):
                     st.write(token)
 
                     if isinstance(token, dict):
@@ -1790,7 +1721,6 @@ def trending_tab():
 
                             if analysis:
                                 st.write(analysis)
-
                         except Exception:
                             pass
 
@@ -1798,9 +1728,7 @@ def trending_tab():
             st.write(tokens)
 
     except Exception as e:
-        st.error(
-            f"Trending request failed: {e}"
-        )
+        st.error(f"Trending request failed: {e}")
 
 
 # ============================================================
@@ -1837,14 +1765,10 @@ def honeypot_tab():
 
         try:
             if chain == "Solana":
-                result = check_solana_token(
-                    address.strip()
-                )
+                result = check_solana_token(address.strip())
 
             elif chain == "Pump.fun":
-                result = check_pumpfun_token(
-                    address.strip()
-                )
+                result = check_pumpfun_token(address.strip())
 
             else:
                 chain_map = {
@@ -1864,9 +1788,7 @@ def honeypot_tab():
                 st.warning("No result returned.")
 
         except Exception as e:
-            st.error(
-                f"Token check failed: {e}"
-            )
+            st.error(f"Token check failed: {e}")
 
 
 # ============================================================
@@ -1889,9 +1811,6 @@ def analysis_tab():
     selected_name = None
     selected_symbol = None
     market_data = None
-    ohlcv = pd.DataFrame()
-    price_series = pd.Series(dtype=float)
-    source_key = None
 
     # --------------------------------------------------------
     # COINGECKO
@@ -1939,12 +1858,11 @@ def analysis_tab():
             source_key = f"CG:{coin_id}"
 
             if st.button("📥 Load Coin Data"):
-                market_data = get_coingecko_live_market(
-                    coin_id
-                )
+                market_data = get_coingecko_live_market(coin_id)
 
                 price_history = get_coingecko_history(
-                    coin_id, days=30
+                    coin_id,
+                    days=30
                 )
 
                 if (
@@ -1967,13 +1885,12 @@ def analysis_tab():
                     )
 
                     st.success("Coin data loaded.")
-
+                    st.rerun()
                 else:
                     st.warning(
                         "CoinGecko data could not be loaded."
                     )
 
-            # Optional exchange candle analysis
             st.caption(
                 "CoinGecko market chart is price-only. "
                 "For real candle, volume and pattern analysis, "
@@ -2013,7 +1930,8 @@ def analysis_tab():
                 )
 
                 valid, message = validate_ohlcv_data(
-                    df, min_rows=35
+                    df,
+                    min_rows=35
                 )
 
                 if valid:
@@ -2030,7 +1948,7 @@ def analysis_tab():
                     st.success(
                         f"Real OHLCV loaded: {len(df)} candles."
                     )
-
+                    st.rerun()
                 else:
                     st.error(message)
 
@@ -2061,19 +1979,12 @@ def analysis_tab():
                         key=f"DEX:{address}"
                     )
 
-                    st.success(
-                        "DexScreener token loaded."
-                    )
-
+                    st.success("DexScreener token loaded.")
+                    st.rerun()
                 else:
-                    st.error(
-                        "Could not convert token data."
-                    )
-
+                    st.error("Could not convert token data.")
             else:
-                st.warning(
-                    "Token/pair not found."
-                )
+                st.warning("Token/pair not found.")
 
         exchange_symbol = st.text_input(
             "Exchange Pair for OHLCV",
@@ -2107,7 +2018,8 @@ def analysis_tab():
             )
 
             valid, message = validate_ohlcv_data(
-                df, min_rows=35
+                df,
+                min_rows=35
             )
 
             if valid:
@@ -2123,6 +2035,7 @@ def analysis_tab():
                 st.success(
                     f"{len(df)} real candles loaded."
                 )
+                st.rerun()
             else:
                 st.error(message)
 
@@ -2163,7 +2076,8 @@ def analysis_tab():
             )
 
             valid, message = validate_ohlcv_data(
-                df, min_rows=35
+                df,
+                min_rows=35
             )
 
             if valid:
@@ -2177,7 +2091,7 @@ def analysis_tab():
                 )
 
                 st.success("Pair loaded.")
-
+                st.rerun()
             else:
                 st.error(message)
 
@@ -2190,14 +2104,10 @@ def analysis_tab():
     loaded_prices = st.session_state.loaded_price_series
 
     if loaded_ohlcv is not None:
-        loaded_ohlcv = normalize_ohlcv(
-            loaded_ohlcv
-        )
+        loaded_ohlcv = normalize_ohlcv(loaded_ohlcv)
 
     if loaded_prices is not None:
-        loaded_prices = normalize_price_series(
-            loaded_prices
-        )
+        loaded_prices = normalize_price_series(loaded_prices)
 
     if loaded_market is not None:
         st.divider()
@@ -2210,33 +2120,25 @@ def analysis_tab():
             if "price" in loaded_market:
                 st.metric(
                     "Price",
-                    format_price(
-                        loaded_market.get("price")
-                    )
+                    format_price(loaded_market.get("price"))
                 )
 
             if "market_cap" in loaded_market:
                 st.metric(
                     "Market Cap",
-                    format_number(
-                        loaded_market.get("market_cap")
-                    )
+                    format_number(loaded_market.get("market_cap"))
                 )
 
             if "volume_24h" in loaded_market:
                 st.metric(
                     "24h Volume",
-                    format_number(
-                        loaded_market.get("volume_24h")
-                    )
+                    format_number(loaded_market.get("volume_24h"))
                 )
 
             if "price_change_24h" in loaded_market:
                 st.metric(
                     "24h Change",
-                    format_percent(
-                        loaded_market.get("price_change_24h")
-                    )
+                    format_percent(loaded_market.get("price_change_24h"))
                 )
 
             if loaded_market.get("url"):
@@ -2268,6 +2170,10 @@ def analysis_tab():
         step=50,
         key="analysis_limit"
     )
+
+    # --------------------------------------------------------
+    # RUN ANALYSIS
+    # --------------------------------------------------------
 
     if loaded_ohlcv is not None and not loaded_ohlcv.empty:
         st.subheader("📡 Loaded Data")
@@ -2360,9 +2266,7 @@ def analysis_tab():
             loaded_prices
         )
 
-        show_price_indicators(
-            price_analysis
-        )
+        show_price_indicators(price_analysis)
 
         show_price_chart(
             None,
@@ -2387,6 +2291,7 @@ def analysis_tab():
 
 def main():
     st.title("🪙 AI Crypto Advisor")
+
     st.caption(
         "Real Market Data | Technical Analysis | AI Signals"
     )
