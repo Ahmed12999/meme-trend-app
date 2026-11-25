@@ -1,3 +1,4 @@
+
 import numpy as np
 import pandas as pd
 
@@ -21,7 +22,7 @@ def clean_series(series):
             [np.inf, -np.inf], np.nan
         ).dropna()
 
-        return result.reset_index(drop=True)
+        return result.reset_index(drop=True).astype(float)
 
     except Exception:
         return pd.Series(dtype=float)
@@ -37,7 +38,9 @@ def _clean_ohlcv(df):
         return pd.DataFrame()
 
     data = df.copy()
-    data.columns = [str(c).lower().strip() for c in data.columns]
+    data.columns = [
+        str(c).lower().strip() for c in data.columns
+    ]
 
     if not all(col in data.columns for col in required):
         return pd.DataFrame()
@@ -71,33 +74,49 @@ def _clean_ohlcv(df):
 
     if "timestamp" in data.columns:
         data["timestamp"] = pd.to_datetime(
-            data["timestamp"], errors="coerce", utc=True
+            data["timestamp"],
+            errors="coerce",
+            utc=True
         )
 
         data = data.dropna(subset=["timestamp"])
+
         data = data.drop_duplicates(
-            subset=["timestamp"], keep="last"
+            subset=["timestamp"],
+            keep="last"
         )
+
         data = data.sort_values("timestamp")
 
     return data.reset_index(drop=True)
 
 
+def _safe_number(value):
+    try:
+        number = float(value)
+
+        if not np.isfinite(number):
+            return None
+
+        return number
+
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 # =========================================================
-# RSI
+# RSI - WILDER
 # =========================================================
 
 def calculate_rsi(series, period=14):
-    """
-    Wilder RSI.
-    Returns NaN until sufficient observations exist.
-    """
 
     prices = clean_series(series)
 
-    if len(prices) < period + 1:
+    if period <= 0 or len(prices) < period + 1:
         return pd.Series(
-            np.nan, index=prices.index, dtype=float
+            np.nan,
+            index=prices.index,
+            dtype=float
         )
 
     delta = prices.diff()
@@ -121,20 +140,22 @@ def calculate_rsi(series, period=14):
 
     rsi = 100 - (100 / (1 + rs))
 
-    # Correct edge cases
     rsi = rsi.mask(
-        (avg_loss == 0) & (avg_gain > 0), 100
+        (avg_loss == 0) & (avg_gain > 0),
+        100
     )
 
     rsi = rsi.mask(
-        (avg_gain == 0) & (avg_loss > 0), 0
+        (avg_gain == 0) & (avg_loss > 0),
+        0
     )
 
     rsi = rsi.mask(
-        (avg_gain == 0) & (avg_loss == 0), 50
+        (avg_gain == 0) & (avg_loss == 0),
+        50
     )
 
-    return rsi
+    return rsi.clip(0, 100)
 
 
 # =========================================================
@@ -142,11 +163,14 @@ def calculate_rsi(series, period=14):
 # =========================================================
 
 def calculate_ema(series, period=20):
+
     prices = clean_series(series)
 
-    if len(prices) < period:
+    if period <= 0 or len(prices) < period:
         return pd.Series(
-            np.nan, index=prices.index, dtype=float
+            np.nan,
+            index=prices.index,
+            dtype=float
         )
 
     return prices.ewm(
@@ -166,27 +190,46 @@ def calculate_macd(
     slow=26,
     signal=9
 ):
+
     prices = clean_series(series)
 
-    if len(prices) < slow + signal:
-        empty = pd.Series(
-            np.nan, index=prices.index, dtype=float
-        )
+    empty = pd.Series(
+        np.nan,
+        index=prices.index,
+        dtype=float
+    )
 
+    if (
+        fast <= 0
+        or slow <= 0
+        or signal <= 0
+        or fast >= slow
+    ):
+        return empty, empty.copy(), empty.copy()
+
+    minimum = slow + signal - 1
+
+    if len(prices) < minimum:
         return empty, empty.copy(), empty.copy()
 
     ema_fast = prices.ewm(
-        span=fast, adjust=False, min_periods=fast
+        span=fast,
+        adjust=False,
+        min_periods=fast
     ).mean()
 
     ema_slow = prices.ewm(
-        span=slow, adjust=False, min_periods=slow
+        span=slow,
+        adjust=False,
+        min_periods=slow
     ).mean()
 
     macd = ema_fast - ema_slow
 
     signal_line = macd.ewm(
-        span=signal, adjust=False, min_periods=signal
+        span=signal,
+        adjust=False,
+        min_periods=signal
     ).mean()
 
     histogram = macd - signal_line
@@ -203,22 +246,31 @@ def calculate_bollinger_bands(
     period=20,
     std_dev=2
 ):
+
     prices = clean_series(series)
 
-    if len(prices) < period:
-        empty = pd.Series(
-            np.nan, index=prices.index, dtype=float
-        )
+    empty = pd.Series(
+        np.nan,
+        index=prices.index,
+        dtype=float
+    )
 
+    if (
+        period <= 1
+        or std_dev <= 0
+        or len(prices) < period
+    ):
         return empty, empty.copy(), empty.copy()
 
     middle = prices.rolling(
-        period, min_periods=period
+        period,
+        min_periods=period
     ).mean()
 
     std = prices.rolling(
-        period, min_periods=period
-    ).std()
+        period,
+        min_periods=period
+    ).std(ddof=0)
 
     upper = middle + std_dev * std
     lower = middle - std_dev * std
@@ -231,28 +283,35 @@ def calculate_bollinger_bands(
 # =========================================================
 
 def calculate_sma(series, period=20):
+
     prices = clean_series(series)
 
-    if len(prices) < period:
+    if period <= 0 or len(prices) < period:
         return pd.Series(
-            np.nan, index=prices.index, dtype=float
+            np.nan,
+            index=prices.index,
+            dtype=float
         )
 
     return prices.rolling(
-        period, min_periods=period
+        period,
+        min_periods=period
     ).mean()
 
 
 # =========================================================
-# ATR
+# ATR - WILDER
 # =========================================================
 
 def calculate_atr(df, period=14):
+
     data = _clean_ohlcv(df)
 
-    if len(data) < period + 1:
+    if period <= 0 or len(data) < period + 1:
         return pd.Series(
-            np.nan, index=data.index, dtype=float
+            np.nan,
+            index=data.index,
+            dtype=float
         )
 
     previous_close = data["close"].shift(1)
@@ -282,48 +341,79 @@ def detect_rsi_divergence(
     rsi,
     lookback=20
 ):
-    price = clean_series(prices)
-    rsi_values = clean_series(rsi)
 
-    length = min(len(price), len(rsi_values))
-
-    if length < lookback:
+    if prices is None or rsi is None:
         return "INSUFFICIENT DATA"
 
-    price = price.tail(lookback).reset_index(drop=True)
-    rsi_values = rsi_values.tail(lookback).reset_index(drop=True)
+    try:
+        # Preserve positional alignment before dropping NaNs.
+        price_raw = pd.to_numeric(
+            pd.Series(prices).reset_index(drop=True),
+            errors="coerce"
+        )
 
-    if price.isna().any() or rsi_values.isna().any():
+        rsi_raw = pd.to_numeric(
+            pd.Series(rsi).reset_index(drop=True),
+            errors="coerce"
+        )
+
+        length = min(len(price_raw), len(rsi_raw))
+
+        if length < lookback:
+            return "INSUFFICIENT DATA"
+
+        paired = pd.DataFrame({
+            "price": price_raw.iloc[-length:].reset_index(drop=True),
+            "rsi": rsi_raw.iloc[-length:].reset_index(drop=True)
+        })
+
+        paired = paired.replace(
+            [np.inf, -np.inf], np.nan
+        ).dropna()
+
+        paired = paired.tail(lookback)
+
+        if len(paired) < lookback:
+            return "INSUFFICIENT DATA"
+
+        half = max(3, lookback // 2)
+
+        old = paired.iloc[:half]
+        new = paired.iloc[half:]
+
+        if old.empty or new.empty:
+            return "INSUFFICIENT DATA"
+
+        old_low = old["price"].min()
+        new_low = new["price"].min()
+
+        old_rsi_low = old["rsi"].min()
+        new_rsi_low = new["rsi"].min()
+
+        old_high = old["price"].max()
+        new_high = new["price"].max()
+
+        old_rsi_high = old["rsi"].max()
+        new_rsi_high = new["rsi"].max()
+
+        # Bullish divergence
+        if (
+            new_low < old_low
+            and new_rsi_low > old_rsi_low
+        ):
+            return "BULLISH DIVERGENCE"
+
+        # Bearish divergence
+        if (
+            new_high > old_high
+            and new_rsi_high < old_rsi_high
+        ):
+            return "BEARISH DIVERGENCE"
+
+        return "NO DIVERGENCE"
+
+    except Exception:
         return "INSUFFICIENT DATA"
-
-    half = max(3, lookback // 2)
-
-    old_price = price.iloc[:half]
-    new_price = price.iloc[half:]
-
-    old_rsi = rsi_values.iloc[:half]
-    new_rsi = rsi_values.iloc[half:]
-
-    if old_price.empty or new_price.empty:
-        return "INSUFFICIENT DATA"
-
-    # Bullish divergence:
-    # Price makes lower low, RSI makes higher low
-    if (
-        new_price.min() < old_price.min()
-        and new_rsi.min() > old_rsi.min()
-    ):
-        return "BULLISH DIVERGENCE"
-
-    # Bearish divergence:
-    # Price makes higher high, RSI makes lower high
-    if (
-        new_price.max() > old_price.max()
-        and new_rsi.max() < old_rsi.max()
-    ):
-        return "BEARISH DIVERGENCE"
-
-    return "NO DIVERGENCE"
 
 
 # =========================================================
@@ -331,6 +421,7 @@ def detect_rsi_divergence(
 # =========================================================
 
 def macd_histogram_strength(histogram):
+
     values = clean_series(histogram)
 
     if len(values) < 2:
@@ -360,8 +451,11 @@ def macd_histogram_strength(histogram):
 
 def detect_candlestick_patterns(df):
     """
-    Detect common candle patterns.
-    Each candle receives one primary pattern.
+    Detect common single and two-candle patterns.
+
+    Note:
+    These are candle-shape detections.
+    A pattern alone does not confirm a reversal.
     """
 
     data = _clean_ohlcv(df)
@@ -371,63 +465,70 @@ def detect_candlestick_patterns(df):
 
     data["pattern"] = "No Pattern"
 
-    for i in range(1, len(data)):
+    for i in range(len(data)):
+
         row = data.iloc[i]
-        previous = data.iloc[i - 1]
 
         o = float(row["open"])
         h = float(row["high"])
         l = float(row["low"])
         c = float(row["close"])
 
-        po = float(previous["open"])
-        pc = float(previous["close"])
-
         body = abs(c - o)
         candle_range = max(h - l, 1e-12)
 
-        upper_wick = h - max(o, c)
-        lower_wick = min(o, c) - l
+        upper_wick = max(0.0, h - max(o, c))
+        lower_wick = max(0.0, min(o, c) - l)
 
         body_ratio = body / candle_range
 
         pattern = "No Pattern"
 
-        # Engulfing has priority
-        if (
-            pc < po
-            and c > o
-            and o <= pc
-            and c >= po
-        ):
-            pattern = "Bullish Engulfing"
+        if i > 0:
 
-        elif (
-            pc > po
-            and c < o
-            and o >= pc
-            and c <= po
-        ):
-            pattern = "Bearish Engulfing"
+            previous = data.iloc[i - 1]
+
+            po = float(previous["open"])
+            pc = float(previous["close"])
+
+            # Bullish Engulfing
+            if (
+                pc < po
+                and c > o
+                and o <= pc
+                and c >= po
+                and body > abs(pc - po)
+            ):
+                pattern = "Bullish Engulfing"
+
+            # Bearish Engulfing
+            elif (
+                pc > po
+                and c < o
+                and o >= pc
+                and c <= po
+                and body > abs(pc - po)
+            ):
+                pattern = "Bearish Engulfing"
 
         # Hammer
-        elif (
-            lower_wick >= body * 2
-            and upper_wick <= body
-            and body_ratio <= 0.4
-        ):
-            pattern = "Hammer"
+        if pattern == "No Pattern" and body_ratio <= 0.4:
 
-        # Shooting Star
-        elif (
-            upper_wick >= body * 2
-            and lower_wick <= body
-            and body_ratio <= 0.4
-        ):
-            pattern = "Shooting Star"
+            if (
+                lower_wick >= max(body * 2, candle_range * 0.5)
+                and upper_wick <= candle_range * 0.15
+            ):
+                pattern = "Hammer"
+
+            # Shooting Star
+            elif (
+                upper_wick >= max(body * 2, candle_range * 0.5)
+                and lower_wick <= candle_range * 0.15
+            ):
+                pattern = "Shooting Star"
 
         # Doji
-        elif body_ratio <= 0.1:
+        if body_ratio <= 0.1:
             pattern = "Doji"
 
         data.loc[data.index[i], "pattern"] = pattern
@@ -445,13 +546,16 @@ def detect_volume_spike(
     multiplier=1.5
 ):
     """
-    Compare the latest candle volume with the average
-    volume of previous candles only.
+    Compare current volume with previous candles only.
     """
 
     data = _clean_ohlcv(df)
 
-    if len(data) < period + 1:
+    if (
+        period <= 0
+        or multiplier <= 0
+        or len(data) < period + 1
+    ):
         return None
 
     previous_volumes = data["volume"].iloc[:-1].tail(period)
@@ -460,7 +564,10 @@ def detect_volume_spike(
         return None
 
     average_volume = previous_volumes.mean()
-    current_volume = float(data["volume"].iloc[-1])
+
+    current_volume = float(
+        data["volume"].iloc[-1]
+    )
 
     if (
         not np.isfinite(average_volume)
@@ -478,9 +585,10 @@ def detect_volume_spike(
 # =========================================================
 
 def calculate_volume_ratio(df, period=20):
+
     data = _clean_ohlcv(df)
 
-    if len(data) < period + 1:
+    if period <= 0 or len(data) < period + 1:
         return None
 
     previous_volumes = data["volume"].iloc[:-1].tail(period)
@@ -489,12 +597,18 @@ def calculate_volume_ratio(df, period=20):
         return None
 
     average_volume = previous_volumes.mean()
-    current_volume = float(data["volume"].iloc[-1])
 
-    if average_volume <= 0 or not np.isfinite(average_volume):
+    current_volume = float(
+        data["volume"].iloc[-1]
+    )
+
+    if (
+        not np.isfinite(average_volume)
+        or average_volume <= 0
+    ):
         return None
 
-    return current_volume / average_volume
+    return float(current_volume / average_volume)
 
 
 # =========================================================
@@ -508,6 +622,7 @@ def risk_management_signals(
     atr_multiplier=2.0,
     reward_ratio=2.0
 ):
+
     price = _safe_number(current_price)
     atr_value = _safe_number(atr)
 
@@ -516,6 +631,8 @@ def risk_management_signals(
         or atr_value is None
         or price <= 0
         or atr_value <= 0
+        or atr_multiplier <= 0
+        or reward_ratio <= 0
     ):
         return None
 
@@ -527,14 +644,19 @@ def risk_management_signals(
     risk_distance = atr_value * atr_multiplier
 
     if direction == "LONG":
+
         stop_loss = price - risk_distance
-        take_profit = price + (
-            risk_distance * reward_ratio
+
+        take_profit = (
+            price + risk_distance * reward_ratio
         )
+
     else:
+
         stop_loss = price + risk_distance
-        take_profit = price - (
-            risk_distance * reward_ratio
+
+        take_profit = (
+            price - risk_distance * reward_ratio
         )
 
     if stop_loss <= 0 or take_profit <= 0:
@@ -550,19 +672,6 @@ def risk_management_signals(
     }
 
 
-def _safe_number(value):
-    try:
-        number = float(value)
-
-        if not np.isfinite(number):
-            return None
-
-        return number
-
-    except (TypeError, ValueError):
-        return None
-
-
 # =========================================================
 # SUPPORT AND RESISTANCE
 # =========================================================
@@ -573,8 +682,10 @@ def find_support_resistance(
     distance_pct=0.03
 ):
     """
-    Find simple recent support and resistance levels.
-    This is a basic range estimate, not a confirmed pivot system.
+    Basic recent-range support/resistance estimate.
+
+    Returns:
+        (support, resistance)
     """
 
     values = clean_series(prices)
@@ -582,7 +693,9 @@ def find_support_resistance(
     if len(values) < 5:
         return None, None
 
-    sample = values.tail(max(5, int(window)))
+    window = max(5, int(window))
+
+    sample = values.tail(window)
 
     current = float(values.iloc[-1])
 
