@@ -2,105 +2,132 @@ import math
 import numpy as np
 import pandas as pd
 
+from technicals import (
+    clean_series,
+    calculate_rsi,
+    calculate_ema,
+    calculate_macd,
+    calculate_bollinger_bands,
+    calculate_sma,
+    calculate_atr,
+    detect_rsi_divergence,
+    detect_candlestick_patterns,
+    detect_volume_spike,
+    calculate_volume_ratio,
+    risk_management_signals,
+    find_support_resistance,
+)
+
 
 # =========================================================
-# BASIC HELPERS
+# HELPERS
 # =========================================================
 
 def _safe_float(value, default=None):
+
     try:
         number = float(value)
-        if not math.isfinite(number):
+
+        if not np.isfinite(number):
             return default
+
         return number
+
     except (TypeError, ValueError):
         return default
 
 
 def _last(series, default=None):
+
     try:
         if series is None or len(series) == 0:
             return default
-        values = pd.Series(series).dropna()
-        if values.empty:
-            return default
-        return _safe_float(values.iloc[-1], default)
+
+        value = _safe_float(series.iloc[-1])
+
+        return value if value is not None else default
+
     except Exception:
         return default
 
 
 def _previous(series, default=None):
+
     try:
         if series is None or len(series) < 2:
             return default
-        values = pd.Series(series).dropna()
-        if len(values) < 2:
-            return default
-        return _safe_float(values.iloc[-2], default)
+
+        value = _safe_float(series.iloc[-2])
+
+        return value if value is not None else default
+
     except Exception:
         return default
 
 
 def _normalize_df(df):
-    """
-    Validate and normalize real OHLCV data.
-    Does not create synthetic candles or volume.
-    """
 
-    required = ["open", "high", "low", "close", "volume"]
+    required = [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]
 
     if df is None or not isinstance(df, pd.DataFrame):
-        return pd.DataFrame()
+        return pd.DataFrame(columns=required)
 
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=required)
 
     data = df.copy()
-    data.columns = [str(c).lower().strip() for c in data.columns]
+
+    data.columns = [
+        str(col).lower().strip()
+        for col in data.columns
+    ]
 
     if not all(col in data.columns for col in required):
-        return pd.DataFrame()
+        return pd.DataFrame(columns=required)
 
     for col in required:
-        data[col] = pd.to_numeric(data[col], errors="coerce")
+        data[col] = pd.to_numeric(
+            data[col],
+            errors="coerce"
+        )
 
-    data = data.replace([np.inf, -np.inf], np.nan)
+    data = data.replace(
+        [np.inf, -np.inf],
+        np.nan
+    )
+
     data = data.dropna(subset=required)
 
-    if data.empty:
-        return pd.DataFrame()
+    valid = (
+        (data["high"] >= data["low"]) &
+        (data["high"] >= data["open"]) &
+        (data["high"] >= data["close"]) &
+        (data["low"] <= data["open"]) &
+        (data["low"] <= data["close"]) &
+        (data["volume"] >= 0)
+    )
 
-    # Invalid price / volume filtering
-    data = data[
-        (data["open"] > 0)
-        & (data["high"] > 0)
-        & (data["low"] > 0)
-        & (data["close"] > 0)
-        & (data["volume"] >= 0)
-    ]
+    return data.loc[valid].reset_index(drop=True)
 
-    # OHLC consistency
-    data = data[
-        (data["high"] >= data["low"])
-        & (data["high"] >= data["open"])
-        & (data["high"] >= data["close"])
-        & (data["low"] <= data["open"])
-        & (data["low"] <= data["close"])
-    ]
 
-    if "timestamp" in data.columns:
-        data["timestamp"] = pd.to_datetime(
-            data["timestamp"], errors="coerce", utc=True
-        )
-        data = data.dropna(subset=["timestamp"])
-        data = data.drop_duplicates(subset=["timestamp"], keep="last")
-        data = data.sort_values("timestamp")
+def _confidence_label(value):
 
-    elif isinstance(data.index, pd.DatetimeIndex):
-        data = data[~data.index.duplicated(keep="last")]
-        data = data.sort_index()
+    if value is None:
+        return "LOW"
 
-    return data.reset_index(drop=True)
+    if value >= 75:
+        return "HIGH"
+
+    if value >= 55:
+        return "MEDIUM"
+
+    return "LOW"
 
 
 # =========================================================
@@ -108,15 +135,11 @@ def _normalize_df(df):
 # =========================================================
 
 def calculate_indicators(df):
-    """
-    Calculate indicators from validated real OHLCV candles.
-    Volume baseline uses previous candles only.
-    """
 
     data = _normalize_df(df)
 
-    if data.empty:
-        return pd.DataFrame()
+    if len(data) < 2:
+        return None
 
     close = data["close"]
     high = data["high"]
@@ -124,91 +147,35 @@ def calculate_indicators(df):
     volume = data["volume"]
 
     # EMA
-    data["ema20"] = close.ewm(
-        span=20, adjust=False, min_periods=20
-    ).mean()
-
-    data["ema50"] = close.ewm(
-        span=50, adjust=False, min_periods=50
-    ).mean()
-
-    data["ema200"] = close.ewm(
-        span=200, adjust=False, min_periods=200
-    ).mean()
+    data["ema20"] = calculate_ema(close, 20)
+    data["ema50"] = calculate_ema(close, 50)
+    data["ema200"] = calculate_ema(close, 200)
 
     data["ema200_ready"] = len(data) >= 250
 
-    # RSI - Wilder smoothing
-    delta = close.diff()
-
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.ewm(
-        alpha=1 / 14, adjust=False, min_periods=14
-    ).mean()
-
-    avg_loss = loss.ewm(
-        alpha=1 / 14, adjust=False, min_periods=14
-    ).mean()
-
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-
-    rsi = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100)
-    rsi = rsi.mask((avg_gain == 0) & (avg_loss > 0), 0)
-    rsi = rsi.mask((avg_gain == 0) & (avg_loss == 0), 50)
-
-    data["rsi"] = rsi
+    # RSI
+    data["rsi"] = calculate_rsi(close, 14)
 
     # MACD
-    ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
-    ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
+    macd, signal, histogram = calculate_macd(close)
 
-    data["macd"] = ema12 - ema26
-
-    data["macd_signal"] = data["macd"].ewm(
-        span=9, adjust=False, min_periods=9
-    ).mean()
-
-    data["macd_histogram"] = (
-        data["macd"] - data["macd_signal"]
-    )
+    data["macd"] = macd
+    data["macd_signal"] = signal
+    data["macd_histogram"] = histogram
 
     # Bollinger Bands
-    data["bb_middle"] = close.rolling(
-        20, min_periods=20
-    ).mean()
+    upper, middle, lower = calculate_bollinger_bands(
+        close,
+        period=20,
+        std_dev=2
+    )
 
-    bb_std = close.rolling(
-        20, min_periods=20
-    ).std()
-
-    data["bb_upper"] = data["bb_middle"] + (2 * bb_std)
-    data["bb_lower"] = data["bb_middle"] - (2 * bb_std)
-
-    data["bb_width"] = (
-        (data["bb_upper"] - data["bb_lower"])
-        / data["bb_middle"].replace(0, np.nan)
-    ) * 100
+    data["bb_upper"] = upper
+    data["bb_middle"] = middle
+    data["bb_lower"] = lower
 
     # ATR
-    previous_close = close.shift(1)
-
-    tr = pd.concat(
-        [
-            high - low,
-            (high - previous_close).abs(),
-            (low - previous_close).abs()
-        ],
-        axis=1
-    ).max(axis=1)
-
-    data["tr"] = tr
-
-    data["atr"] = tr.ewm(
-        alpha=1 / 14, adjust=False, min_periods=14
-    ).mean()
+    data["atr"] = calculate_atr(data, 14)
 
     # Directional Movement / ADX
     up_move = high.diff()
@@ -220,7 +187,8 @@ def calculate_indicators(df):
             up_move,
             0
         ),
-        index=data.index
+        index=data.index,
+        dtype=float
     )
 
     minus_dm = pd.Series(
@@ -229,73 +197,90 @@ def calculate_indicators(df):
             down_move,
             0
         ),
-        index=data.index
+        index=data.index,
+        dtype=float
     )
 
-    atr_safe = data["atr"].replace(0, np.nan)
+    atr = data["atr"].replace(0, np.nan)
 
-    data["plus_di"] = (
-        100 * plus_dm.ewm(
-            alpha=1 / 14, adjust=False, min_periods=14
-        ).mean() / atr_safe
+    data["plus_di"] = 100 * (
+        plus_dm.ewm(
+            alpha=1 / 14,
+            adjust=False,
+            min_periods=14
+        ).mean() / atr
     )
 
-    data["minus_di"] = (
-        100 * minus_dm.ewm(
-            alpha=1 / 14, adjust=False, min_periods=14
-        ).mean() / atr_safe
+    data["minus_di"] = 100 * (
+        minus_dm.ewm(
+            alpha=1 / 14,
+            adjust=False,
+            min_periods=14
+        ).mean() / atr
     )
 
-    di_sum = (data["plus_di"] + data["minus_di"]).replace(
-        0, np.nan
+    di_sum = (
+        data["plus_di"] + data["minus_di"]
+    ).replace(0, np.nan)
+
+    dx = (
+        100 *
+        (
+            data["plus_di"] - data["minus_di"]
+        ).abs() / di_sum
     )
 
-    data["dx"] = (
-        (data["plus_di"] - data["minus_di"]).abs()
-        / di_sum
-    ) * 100
-
-    data["adx"] = data["dx"].ewm(
-        alpha=1 / 14, adjust=False, min_periods=14
+    data["adx"] = dx.ewm(
+        alpha=1 / 14,
+        adjust=False,
+        min_periods=14
     ).mean()
 
-    # Volume: previous 20 completed candles only
+    # Volume baseline excludes current candle
     data["volume_sma20"] = volume.shift(1).rolling(
-        20, min_periods=20
+        20,
+        min_periods=20
     ).mean()
 
     data["volume_ratio"] = (
-        volume / data["volume_sma20"].replace(0, np.nan)
+        volume /
+        data["volume_sma20"].replace(0, np.nan)
     )
 
     # OBV
     direction = np.sign(close.diff()).fillna(0)
-    data["obv"] = (direction * volume).cumsum()
+
+    data["obv"] = (
+        direction * volume
+    ).cumsum()
 
     data["obv_sma20"] = data["obv"].rolling(
-        20, min_periods=20
+        20,
+        min_periods=20
     ).mean()
 
-    # VWAP - rolling 20 candle approximation
-    typical_price = (high + low + close) / 3
+    # VWAP approximation
+    typical_price = (
+        high + low + close
+    ) / 3
 
-    rolling_volume = volume.rolling(20, min_periods=20).sum()
+    rolling_volume = volume.rolling(
+        20,
+        min_periods=20
+    ).sum()
 
     data["vwap20"] = (
         (typical_price * volume).rolling(
-            20, min_periods=20
+            20,
+            min_periods=20
         ).sum()
-        / rolling_volume.replace(0, np.nan)
+        /
+        rolling_volume.replace(0, np.nan)
     )
 
     # SMA
-    data["sma20"] = close.rolling(
-        20, min_periods=20
-    ).mean()
-
-    data["sma50"] = close.rolling(
-        50, min_periods=50
-    ).mean()
+    data["sma20"] = calculate_sma(close, 20)
+    data["sma50"] = calculate_sma(close, 50)
 
     # Price change
     data["price_change"] = close.pct_change() * 100
@@ -308,197 +293,297 @@ def calculate_indicators(df):
 # =========================================================
 
 def calculate_ai_score(df, indicators=None):
-    """
-    Returns score, direction, confidence and signal coverage.
-    Neutral or unavailable indicators are not treated as bullish.
-    """
 
-    data = indicators if isinstance(indicators, pd.DataFrame) else None
+    data = _normalize_df(df)
 
-    if data is None:
-        data = calculate_indicators(df)
+    if indicators is None:
+        indicators = calculate_indicators(data)
 
-    if data.empty:
+    if indicators is None or indicators.empty:
         return {
             "score": None,
-            "direction": "INSUFFICIENT DATA",
-            "confidence": "LOW",
+            "direction": "NEUTRAL",
+            "confidence": 0,
+            "confidence_label": "LOW",
             "coverage": 0,
             "available_signals": 0,
-            "total_signals": 8,
+            "total_signals": 7,
             "signals": {},
-            "indicators": data,
-            "error": "Valid OHLCV data is unavailable."
+            "indicators": indicators,
+            "error": "Insufficient market data"
         }
 
-    row = data.iloc[-1]
+    row = indicators.iloc[-1]
 
     bullish = 0.0
     bearish = 0.0
     available = 0
+
     signals = {}
 
-    def add_signal(name, value, weight=1.0):
-        nonlocal bullish, bearish, available
+    # -----------------------------------------------------
+    # 1. EMA 20 / 50
+    # -----------------------------------------------------
 
-        if value is None:
-            signals[name] = "UNAVAILABLE"
-            return
+    ema20 = _safe_float(row.get("ema20"))
+    ema50 = _safe_float(row.get("ema50"))
+
+    if ema20 is not None and ema50 is not None:
 
         available += 1
 
-        if value > 0:
-            bullish += weight
-            signals[name] = "BULLISH"
-        elif value < 0:
-            bearish += weight
-            signals[name] = "BEARISH"
-        else:
-            signals[name] = "NEUTRAL"
+        if ema20 > ema50:
+            bullish += 1
+            signals["EMA20_50"] = "BULLISH"
 
-    price = _safe_float(row.get("close"))
-    ema20 = _safe_float(row.get("ema20"))
-    ema50 = _safe_float(row.get("ema50"))
+        elif ema20 < ema50:
+            bearish += 1
+            signals["EMA20_50"] = "BEARISH"
+
+        else:
+            signals["EMA20_50"] = "NEUTRAL"
+
+    else:
+        signals["EMA20_50"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # 2. EMA 200
+    # -----------------------------------------------------
+
     ema200 = _safe_float(row.get("ema200"))
+    current_price = _safe_float(row.get("close"))
+
+    if (
+        ema200 is not None
+        and current_price is not None
+        and len(indicators) >= 250
+    ):
+
+        available += 1
+
+        if current_price > ema200:
+            bullish += 1
+            signals["EMA200"] = "BULLISH"
+
+        elif current_price < ema200:
+            bearish += 1
+            signals["EMA200"] = "BEARISH"
+
+        else:
+            signals["EMA200"] = "NEUTRAL"
+
+    else:
+        signals["EMA200"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # 3. RSI
+    # -----------------------------------------------------
 
     rsi = _safe_float(row.get("rsi"))
+
+    if rsi is not None:
+
+        available += 1
+
+        if 50 < rsi < 70:
+            bullish += 1
+            signals["RSI"] = "BULLISH"
+
+        elif 30 < rsi < 50:
+            bearish += 1
+            signals["RSI"] = "BEARISH"
+
+        elif rsi >= 70:
+            signals["RSI"] = "OVERBOUGHT"
+
+        elif rsi <= 30:
+            signals["RSI"] = "OVERSOLD"
+
+        else:
+            signals["RSI"] = "NEUTRAL"
+
+    else:
+        signals["RSI"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # 4. MACD
+    # -----------------------------------------------------
+
     macd = _safe_float(row.get("macd"))
     macd_signal = _safe_float(row.get("macd_signal"))
+
+    if macd is not None and macd_signal is not None:
+
+        available += 1
+
+        if macd > macd_signal:
+            bullish += 1
+            signals["MACD"] = "BULLISH"
+
+        elif macd < macd_signal:
+            bearish += 1
+            signals["MACD"] = "BEARISH"
+
+        else:
+            signals["MACD"] = "NEUTRAL"
+
+    else:
+        signals["MACD"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # 5. ADX / DI
+    # -----------------------------------------------------
 
     adx = _safe_float(row.get("adx"))
     plus_di = _safe_float(row.get("plus_di"))
     minus_di = _safe_float(row.get("minus_di"))
 
-    vwap = _safe_float(row.get("vwap20"))
-    obv = _safe_float(row.get("obv"))
-    obv_sma = _safe_float(row.get("obv_sma20"))
-
-    volume_ratio = _safe_float(row.get("volume_ratio"))
-
-    # EMA 20 / 50
-    if price is not None and ema20 is not None and ema50 is not None:
-        if price > ema20 and ema20 > ema50:
-            add_signal("EMA20_50", 1)
-        elif price < ema20 and ema20 < ema50:
-            add_signal("EMA20_50", -1)
-        else:
-            add_signal("EMA20_50", 0)
-    else:
-        add_signal("EMA20_50", None)
-
-    # EMA 200 only when sufficient history exists
-    if len(data) >= 250 and price is not None and ema200 is not None:
-        add_signal(
-            "EMA200",
-            1 if price > ema200 else -1 if price < ema200 else 0,
-            1.5
-        )
-    else:
-        add_signal("EMA200", None)
-
-    # RSI
-    if rsi is not None:
-        if rsi >= 55 and rsi < 75:
-            add_signal("RSI", 1)
-        elif rsi <= 45 and rsi > 25:
-            add_signal("RSI", -1)
-        else:
-            add_signal("RSI", 0)
-    else:
-        add_signal("RSI", None)
-
-    # MACD
-    if macd is not None and macd_signal is not None:
-        add_signal(
-            "MACD",
-            1 if macd > macd_signal else
-            -1 if macd < macd_signal else 0
-        )
-    else:
-        add_signal("MACD", None)
-
-    # ADX direction only when trend strength is meaningful
     if (
         adx is not None
         and plus_di is not None
         and minus_di is not None
-        and adx >= 18
     ):
-        add_signal(
-            "ADX_DI",
-            1 if plus_di > minus_di else
-            -1 if minus_di > plus_di else 0
-        )
-    else:
-        add_signal("ADX_DI", None)
 
-    # VWAP
-    if price is not None and vwap is not None:
-        add_signal(
-            "VWAP",
-            1 if price > vwap else -1 if price < vwap else 0
-        )
-    else:
-        add_signal("VWAP", None)
+        available += 1
 
-    # OBV
-    if obv is not None and obv_sma is not None:
-        add_signal(
-            "OBV",
-            1 if obv > obv_sma else
-            -1 if obv < obv_sma else 0
-        )
-    else:
-        add_signal("OBV", None)
+        if adx >= 20 and plus_di > minus_di:
+            bullish += 1
+            signals["ADX_DI"] = "BULLISH"
 
-    # Volume confirmation: not a directional signal by itself
-    if volume_ratio is not None:
-        if volume_ratio >= 1.5:
-            signals["VOLUME"] = "HIGH VOLUME"
-        elif volume_ratio <= 0.5:
-            signals["VOLUME"] = "LOW VOLUME"
+        elif adx >= 20 and minus_di > plus_di:
+            bearish += 1
+            signals["ADX_DI"] = "BEARISH"
+
         else:
-            signals["VOLUME"] = "NORMAL VOLUME"
+            signals["ADX_DI"] = "WEAK / NEUTRAL"
+
     else:
-        signals["VOLUME"] = "UNAVAILABLE"
+        signals["ADX_DI"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # 6. VWAP
+    # -----------------------------------------------------
+
+    vwap = _safe_float(row.get("vwap20"))
+
+    if current_price is not None and vwap is not None:
+
+        available += 1
+
+        if current_price > vwap:
+            bullish += 1
+            signals["VWAP"] = "BULLISH"
+
+        elif current_price < vwap:
+            bearish += 1
+            signals["VWAP"] = "BEARISH"
+
+        else:
+            signals["VWAP"] = "NEUTRAL"
+
+    else:
+        signals["VWAP"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # 7. OBV
+    # -----------------------------------------------------
+
+    obv = _safe_float(row.get("obv"))
+    obv_sma = _safe_float(row.get("obv_sma20"))
+
+    if obv is not None and obv_sma is not None:
+
+        available += 1
+
+        if obv > obv_sma:
+            bullish += 1
+            signals["OBV"] = "BULLISH"
+
+        elif obv < obv_sma:
+            bearish += 1
+            signals["OBV"] = "BEARISH"
+
+        else:
+            signals["OBV"] = "NEUTRAL"
+
+    else:
+        signals["OBV"] = "UNAVAILABLE"
+
+    # -----------------------------------------------------
+    # SCORE
+    # -----------------------------------------------------
+
+    directional_total = bullish + bearish
+
+    if directional_total > 0:
+
+        score = (
+            bullish / directional_total
+        ) * 100
+
+    elif available > 0:
+
+        score = 50.0
+
+    else:
+
+        score = None
+
+    if score is None:
+        direction = "NEUTRAL"
+
+    elif score >= 60:
+        direction = "BULLISH"
+
+    elif score <= 40:
+        direction = "BEARISH"
+
+    else:
+        direction = "NEUTRAL"
 
     total_signals = 7
 
-    if available == 0 or (bullish + bearish) == 0:
-        score = 50.0 if available > 0 else None
-        direction = "NEUTRAL" if available > 0 else "INSUFFICIENT DATA"
+    coverage = (
+        available / total_signals
+    ) * 100
+
+    # Confidence considers both signal agreement
+    # and the amount of available information.
+    if directional_total > 0:
+
+        agreement = (
+            max(bullish, bearish) /
+            directional_total
+        ) * 100
+
+        confidence = (
+            agreement * 0.70
+            + coverage * 0.30
+        )
+
     else:
-        score = (bullish / (bullish + bearish)) * 100
+        confidence = coverage * 0.30
 
-        if score >= 60:
-            direction = "BULLISH"
-        elif score <= 40:
-            direction = "BEARISH"
-        else:
-            direction = "NEUTRAL"
-
-    coverage = (available / total_signals) * 100
-
-    if coverage >= 85 and available >= 6:
-        confidence = "HIGH"
-    elif coverage >= 60 and available >= 4:
-        confidence = "MEDIUM"
-    else:
-        confidence = "LOW"
-
-    # Low coverage must not produce a confident-looking score.
-    if coverage < 50:
-        confidence = "LOW"
+    confidence = float(
+        np.clip(confidence, 0, 100)
+    )
 
     return {
-        "score": round(score, 2) if score is not None else None,
+        "score": (
+            round(float(score), 2)
+            if score is not None
+            else None
+        ),
         "direction": direction,
-        "confidence": confidence,
-        "coverage": round(coverage, 1),
+        "confidence": round(confidence, 2),
+        "confidence_label": _confidence_label(confidence),
+        "coverage": round(coverage, 2),
         "available_signals": available,
         "total_signals": total_signals,
+        "bullish_signals": bullish,
+        "bearish_signals": bearish,
         "signals": signals,
-        "indicators": data,
+        "indicators": indicators,
         "error": None
     }
 
@@ -508,15 +593,16 @@ def calculate_ai_score(df, indicators=None):
 # =========================================================
 
 def detect_market_regime(df, indicators=None):
-    data = indicators if isinstance(indicators, pd.DataFrame) else None
 
-    if data is None:
-        data = calculate_indicators(df)
+    data = _normalize_df(df)
 
-    if data.empty or len(data) < 30:
-        return "INSUFFICIENT DATA"
+    if indicators is None:
+        indicators = calculate_indicators(data)
 
-    row = data.iloc[-1]
+    if indicators is None or indicators.empty:
+        return "UNKNOWN"
+
+    row = indicators.iloc[-1]
 
     price = _safe_float(row.get("close"))
     ema20 = _safe_float(row.get("ema20"))
@@ -524,31 +610,47 @@ def detect_market_regime(df, indicators=None):
     ema200 = _safe_float(row.get("ema200"))
     adx = _safe_float(row.get("adx"))
 
-    if price is None or ema20 is None or ema50 is None:
+    if None in (price, ema20, ema50):
         return "INSUFFICIENT DATA"
 
-    if adx is None:
-        adx = 0
+    strong_trend = (
+        adx is not None and adx >= 25
+    )
 
-    ema200_ready = len(data) >= 250 and ema200 is not None
+    if (
+        price > ema20
+        and ema20 > ema50
+        and (
+            ema200 is None
+            or len(indicators) < 250
+            or ema50 > ema200
+        )
+    ):
 
-    if ema200_ready:
-        if price > ema20 > ema50 > ema200 and adx >= 20:
+        if strong_trend:
             return "STRONG UPTREND"
 
-        if price < ema20 < ema50 < ema200 and adx >= 20:
-            return "STRONG DOWNTREND"
-
-    if price > ema20 > ema50:
         return "UPTREND"
 
-    if price < ema20 < ema50:
+    if (
+        price < ema20
+        and ema20 < ema50
+        and (
+            ema200 is None
+            or len(indicators) < 250
+            or ema50 < ema200
+        )
+    ):
+
+        if strong_trend:
+            return "STRONG DOWNTREND"
+
         return "DOWNTREND"
 
-    if adx < 18:
+    if adx is not None and adx < 20:
         return "SIDEWAYS / RANGING"
 
-    return "MIXED / TRANSITION"
+    return "MIXED / TRANSITIONAL"
 
 
 # =========================================================
@@ -556,63 +658,104 @@ def detect_market_regime(df, indicators=None):
 # =========================================================
 
 def generate_ai_report(df, result=None):
-    result = result or calculate_ai_score(df)
 
-    if result.get("error"):
-        return "পর্যাপ্ত নির্ভরযোগ্য OHLCV ডেটা পাওয়া যায়নি।"
+    data = _normalize_df(df)
+
+    if data.empty:
+        return "পর্যাপ্ত Market Data পাওয়া যায়নি।"
+
+    if result is None:
+        result = calculate_ai_score(data)
+
+    indicators = result.get("indicators")
+
+    if indicators is None or indicators.empty:
+        indicators = calculate_indicators(data)
+
+    if indicators is None or indicators.empty:
+        return "Technical Indicators তৈরি করা যায়নি।"
+
+    row = indicators.iloc[-1]
+
+    price = _safe_float(row.get("close"))
+    rsi = _safe_float(row.get("rsi"))
+    macd = _safe_float(row.get("macd"))
+    signal = _safe_float(row.get("macd_signal"))
+    volume_ratio = _safe_float(row.get("volume_ratio"))
 
     score = result.get("score")
-    direction = result.get("direction", "UNKNOWN")
-    confidence = result.get("confidence", "LOW")
-    coverage = result.get("coverage", 0)
+    confidence = result.get("confidence")
+    label = result.get("confidence_label", "LOW")
 
-    data = result.get("indicators")
+    regime = detect_market_regime(
+        data,
+        indicators
+    )
 
-    if data is None or data.empty:
-        return "Indicator data unavailable."
+    lines = []
 
-    row = data.iloc[-1]
-
-    rsi = _safe_float(row.get("rsi"))
-    volume_ratio = _safe_float(row.get("volume_ratio"))
-    regime = detect_market_regime(data, indicators=data)
-
-    lines = [
-        "### 🤖 AI Market Analysis",
-        f"- **Market Direction:** {direction}",
-        f"- **AI Score:** {score if score is not None else 'N/A'}",
-        f"- **Confidence:** {confidence}",
-        f"- **Signal Coverage:** {coverage}%",
-        f"- **Market Regime:** {regime}"
-    ]
-
-    if rsi is not None:
-        lines.append(f"- **RSI:** {rsi:.2f}")
-
-    if volume_ratio is not None:
-        lines.append(f"- **Volume Ratio:** {volume_ratio:.2f}x")
-    else:
-        lines.append("- **Volume Ratio:** Not enough previous volume data")
-
-    if direction == "BULLISH":
-        lines.append("- **Insight:** Bullish signals are stronger, but confirmation is still necessary.")
-    elif direction == "BEARISH":
-        lines.append("- **Insight:** Bearish signals are stronger. Manage downside risk.")
-    else:
-        lines.append("- **Insight:** Signals are mixed or neutral. Avoid assuming a clear trend.")
-
-    if confidence == "LOW":
-        lines.append("- ⚠️ Low confidence: more historical candles are needed.")
+    lines.append("## 🤖 AI Market Analysis")
+    lines.append("")
 
     lines.append(
-        "- This is technical analysis, not a guaranteed prediction."
+        f"**Current Price:** {price if price is not None else 'N/A'}"
+    )
+
+    lines.append(
+        f"**AI Score:** {score if score is not None else 'N/A'} / 100"
+    )
+
+    lines.append(
+        f"**Direction:** {result.get('direction', 'UNKNOWN')}"
+    )
+
+    lines.append(
+        f"**Confidence:** {confidence if confidence is not None else 'N/A'} / 100 ({label})"
+    )
+
+    lines.append(
+        f"**Data Coverage:** {result.get('coverage', 0)}%"
+    )
+
+    lines.append(
+        f"**Market Regime:** {regime}"
+    )
+
+    lines.append("")
+    lines.append("### Technical Indicators")
+
+    lines.append(
+        f"- RSI: {rsi if rsi is not None else 'N/A'}"
+    )
+
+    lines.append(
+        f"- MACD: {macd if macd is not None else 'N/A'}"
+    )
+
+    lines.append(
+        f"- MACD Signal: {signal if signal is not None else 'N/A'}"
+    )
+
+    lines.append(
+        f"- Volume Ratio: {round(volume_ratio, 2) if volume_ratio is not None else 'N/A'}"
+    )
+
+    lines.append("")
+    lines.append("### Signal Summary")
+
+    for name, value in result.get("signals", {}).items():
+        lines.append(f"- {name}: {value}")
+
+    lines.append("")
+    lines.append(
+        "⚠️ এটি technical indicator-ভিত্তিক বিশ্লেষণ; নিশ্চিত ভবিষ্যদ্বাণী নয়।"
     )
 
     return "\n".join(lines)
 
 
 # =========================================================
-# LEGACY AI DECISION
+# LEGACY BUY / SELL DECISION
 # =========================================================
 
 def ai_decision(
@@ -623,41 +766,55 @@ def ai_decision(
     volume,
     strictness="medium"
 ):
+
     rsi = _safe_float(rsi)
     macd_val = _safe_float(macd_val)
     macd_signal = _safe_float(macd_signal)
     price_change = _safe_float(price_change)
     volume = _safe_float(volume)
 
-    if None in (rsi, macd_val, macd_signal, price_change):
-        return "⚠️ পর্যাপ্ত Indicator Data নেই।"
+    if None in (
+        rsi,
+        macd_val,
+        macd_signal,
+        price_change
+    ):
+        return "⚠️ পর্যাপ্ত তথ্য নেই — HOLD"
 
-    score = 0
+    bullish = 0
+    bearish = 0
 
-    if rsi < 30:
-        score += 1
-    elif rsi > 70:
-        score -= 1
+    if rsi > 50:
+        bullish += 1
+
+    elif rsi < 50:
+        bearish += 1
 
     if macd_val > macd_signal:
-        score += 1
+        bullish += 1
+
     elif macd_val < macd_signal:
-        score -= 1
+        bearish += 1
 
-    if price_change > 1:
-        score += 1
-    elif price_change < -1:
-        score -= 1
+    if price_change > 0:
+        bullish += 1
 
-    threshold = 3 if strictness == "high" else 1
+    elif price_change < 0:
+        bearish += 1
 
-    if score >= threshold:
-        return "🟢 BUY Signal: একাধিক Indicator bullish। Risk যাচাই করে সিদ্ধান্ত নিন।"
+    required = {
+        "low": 2,
+        "medium": 3,
+        "high": 3
+    }.get(str(strictness).lower(), 3)
 
-    if score <= -threshold:
-        return "🔴 SELL Signal: একাধিক Indicator bearish। Risk যাচাই করুন।"
+    if bullish >= required:
+        return "🟢 BUY Bias — একাধিক indicator bullish"
 
-    return "🟡 HOLD: Indicator-গুলোর মধ্যে পরিষ্কার ঐকমত্য নেই।"
+    if bearish >= required:
+        return "🔴 SELL Bias — একাধিক indicator bearish"
+
+    return "🟡 HOLD — পরিষ্কার direction নেই"
 
 
 # =========================================================
@@ -665,162 +822,160 @@ def ai_decision(
 # =========================================================
 
 def bollinger_breakout_signal(df):
-    data = calculate_indicators(df)
 
-    if data.empty or len(data) < 25:
-        return "INSUFFICIENT DATA"
+    indicators = calculate_indicators(df)
 
-    row = data.iloc[-1]
+    if indicators is None or len(indicators) < 21:
+        return "Insufficient Data"
 
-    price = _safe_float(row.get("close"))
+    row = indicators.iloc[-1]
+    previous = indicators.iloc[-2]
+
+    close = _safe_float(row.get("close"))
+    previous_close = _safe_float(previous.get("close"))
+
     upper = _safe_float(row.get("bb_upper"))
     lower = _safe_float(row.get("bb_lower"))
 
-    if None in (price, upper, lower):
-        return "INSUFFICIENT DATA"
+    previous_upper = _safe_float(previous.get("bb_upper"))
+    previous_lower = _safe_float(previous.get("bb_lower"))
 
-    if price > upper:
-        return "BULLISH BREAKOUT"
+    if None in (
+        close,
+        previous_close,
+        upper,
+        lower,
+        previous_upper,
+        previous_lower
+    ):
+        return "Insufficient Data"
 
-    if price < lower:
-        return "BEARISH BREAKDOWN"
+    if (
+        close > upper
+        and previous_close <= previous_upper
+    ):
+        return "Bullish Breakout"
 
-    return "NO BREAKOUT"
+    if (
+        close < lower
+        and previous_close >= previous_lower
+    ):
+        return "Bearish Breakdown"
+
+    return "No Confirmed Breakout"
 
 
 # =========================================================
 # SMA CROSSOVER
+# Accepts DataFrame OR close Series
 # =========================================================
 
 def calculate_sma_crossover(df):
-    data = calculate_indicators(df)
 
-    if data.empty or len(data) < 51:
-        return "INSUFFICIENT DATA"
+    if isinstance(df, pd.Series):
+        close = clean_series(df)
 
-    previous = data.iloc[-2]
-    current = data.iloc[-1]
+    else:
+        data = _normalize_df(df)
 
-    p20 = _safe_float(previous.get("sma20"))
-    p50 = _safe_float(previous.get("sma50"))
-    c20 = _safe_float(current.get("sma20"))
-    c50 = _safe_float(current.get("sma50"))
+        if data.empty:
+            return "Insufficient Data"
 
-    if None in (p20, p50, c20, c50):
-        return "INSUFFICIENT DATA"
+        close = data["close"]
 
-    if p20 <= p50 and c20 > c50:
-        return "BULLISH CROSSOVER"
+    if len(close) < 51:
+        return "Insufficient Data"
 
-    if p20 >= p50 and c20 < c50:
-        return "BEARISH CROSSOVER"
+    sma20 = calculate_sma(close, 20)
+    sma50 = calculate_sma(close, 50)
 
-    return "NO CROSSOVER"
+    current20 = _last(sma20)
+    previous20 = _previous(sma20)
+
+    current50 = _last(sma50)
+    previous50 = _previous(sma50)
+
+    if None in (
+        current20,
+        previous20,
+        current50,
+        previous50
+    ):
+        return "Insufficient Data"
+
+    if (
+        previous20 <= previous50
+        and current20 > current50
+    ):
+        return "Bullish Golden Cross"
+
+    if (
+        previous20 >= previous50
+        and current20 < current50
+    ):
+        return "Bearish Death Cross"
+
+    if current20 > current50:
+        return "Bullish SMA Trend"
+
+    if current20 < current50:
+        return "Bearish SMA Trend"
+
+    return "Neutral"
 
 
 # =========================================================
-# MACD HISTOGRAM
+# MACD HISTOGRAM SIGNAL
 # =========================================================
 
 def macd_histogram_signal(df):
-    data = calculate_indicators(df)
 
-    if data.empty or len(data) < 35:
-        return "INSUFFICIENT DATA"
+    indicators = calculate_indicators(df)
 
-    previous = _safe_float(data["macd_histogram"].iloc[-2])
-    current = _safe_float(data["macd_histogram"].iloc[-1])
+    if indicators is None or len(indicators) < 35:
+        return "Insufficient Data"
 
-    if previous is None or current is None:
-        return "INSUFFICIENT DATA"
+    histogram = indicators["macd_histogram"]
 
-    if previous <= 0 and current > 0:
-        return "BULLISH MOMENTUM CROSS"
+    current = _last(histogram)
+    previous = _previous(histogram)
 
-    if previous >= 0 and current < 0:
-        return "BEARISH MOMENTUM CROSS"
+    if current is None or previous is None:
+        return "Insufficient Data"
+
+    if current > 0 and previous <= 0:
+        return "Bullish MACD Cross"
+
+    if current < 0 and previous >= 0:
+        return "Bearish MACD Cross"
 
     if current > previous and current > 0:
-        return "BULLISH MOMENTUM INCREASING"
+        return "Bullish Momentum Increasing"
 
     if current < previous and current < 0:
-        return "BEARISH MOMENTUM INCREASING"
+        return "Bearish Momentum Increasing"
 
-    return "MIXED MOMENTUM"
+    if current < previous and current > 0:
+        return "Bullish Momentum Weakening"
+
+    if current > previous and current < 0:
+        return "Bearish Momentum Weakening"
+
+    return "Neutral"
 
 
 # =========================================================
-# CANDLESTICK PATTERN DETECTION
+# CANDLESTICK PATTERN
+# Uses technicals.py as the single source
 # =========================================================
 
-def detect_candlestick_patterns(df):
-    data = _normalize_df(df)
+def detect_patterns(df):
+    return detect_candlestick_patterns(df)
 
-    if data.empty:
-        return pd.DataFrame()
 
-    data["pattern"] = "No Pattern"
-
-    for i in range(1, len(data)):
-        row = data.iloc[i]
-        prev = data.iloc[i - 1]
-
-        o = row["open"]
-        h = row["high"]
-        l = row["low"]
-        c = row["close"]
-
-        po = prev["open"]
-        pc = prev["close"]
-
-        body = abs(c - o)
-        candle_range = max(h - l, 1e-12)
-
-        upper_wick = h - max(o, c)
-        lower_wick = min(o, c) - l
-
-        pattern = "No Pattern"
-
-        # Engulfing gets priority
-        if (
-            pc < po
-            and c > o
-            and o <= pc
-            and c >= po
-        ):
-            pattern = "Bullish Engulfing"
-
-        elif (
-            pc > po
-            and c < o
-            and o >= pc
-            and c <= po
-        ):
-            pattern = "Bearish Engulfing"
-
-        # Hammer
-        elif (
-            lower_wick >= body * 2
-            and upper_wick <= body
-            and body / candle_range <= 0.4
-        ):
-            pattern = "Hammer"
-
-        # Shooting Star
-        elif (
-            upper_wick >= body * 2
-            and lower_wick <= body
-            and body / candle_range <= 0.4
-        ):
-            pattern = "Shooting Star"
-
-        # Doji
-        elif body / candle_range <= 0.1:
-            pattern = "Doji"
-
-        data.loc[data.index[i], "pattern"] = pattern
-
-    return data
+# Backward-compatible function name
+def detect_candlestick_patterns_ai(df):
+    return detect_candlestick_patterns(df)
 
 
 # =========================================================
@@ -828,51 +983,95 @@ def detect_candlestick_patterns(df):
 # =========================================================
 
 def candlestick_volume_ai(df, spike=None):
-    patterns = detect_candlestick_patterns(df)
 
-    if patterns.empty:
-        return "পর্যাপ্ত Candle Data নেই।"
+    data = _normalize_df(df)
 
-    # Only evaluate the latest candle.
-    pattern = patterns.iloc[-1].get("pattern", "No Pattern")
+    if data.empty:
+        return {
+            "pattern": "No Pattern",
+            "volume_spike": None,
+            "signal": "NEUTRAL",
+            "message": "পর্যাপ্ত data নেই"
+        }
 
-    messages = {
-        "Bullish Engulfing": "🟢 Bullish Engulfing: সম্ভাব্য bullish reversal pattern।",
-        "Bearish Engulfing": "🔴 Bearish Engulfing: সম্ভাব্য bearish reversal pattern।",
-        "Hammer": "🟢 Hammer: সম্ভাব্য bullish reversal, confirmation প্রয়োজন।",
-        "Shooting Star": "🔴 Shooting Star: সম্ভাব্য bearish reversal, confirmation প্রয়োজন।",
-        "Doji": "🟡 Doji: বাজারে indecision দেখা যাচ্ছে।"
-    }
+    patterns = detect_candlestick_patterns(data)
 
-    message = messages.get(
-        pattern,
-        "কোনো উল্লেখযোগ্য Candlestick Pattern পাওয়া যায়নি।"
+    pattern = "No Pattern"
+    strength = "LOW"
+    context = "NEUTRAL"
+
+    if not patterns.empty:
+
+        pattern = patterns["pattern"].iloc[-1]
+        strength = patterns["pattern_strength"].iloc[-1]
+        context = patterns["pattern_context"].iloc[-1]
+
+    if spike is None:
+        spike = detect_volume_spike(data)
+
+    signal = "NEUTRAL"
+    message = "স্পষ্ট confirmation পাওয়া যায়নি"
+
+    bullish_patterns = (
+        "Hammer",
+        "Bullish Engulfing"
     )
 
-    if spike is True:
-        message += " Volume spike detected."
-    elif spike is False:
-        message += " উল্লেখযোগ্য Volume Spike নেই।"
+    bearish_patterns = (
+        "Shooting Star",
+        "Bearish Engulfing"
+    )
 
-    return message
+    if pattern in bullish_patterns:
+
+        if spike is True:
+            signal = "BULLISH"
+            message = "Bullish candle এবং volume spike পাওয়া গেছে"
+
+        else:
+            signal = "WEAK BULLISH"
+            message = "Bullish candle আছে, কিন্তু volume confirmation নেই"
+
+    elif pattern in bearish_patterns:
+
+        if spike is True:
+            signal = "BEARISH"
+            message = "Bearish candle এবং volume spike পাওয়া গেছে"
+
+        else:
+            signal = "WEAK BEARISH"
+            message = "Bearish candle আছে, কিন্তু volume confirmation নেই"
+
+    elif pattern == "Doji":
+        message = "Market indecision — পরবর্তী candle confirmation প্রয়োজন"
+
+    return {
+        "pattern": pattern,
+        "pattern_strength": strength,
+        "pattern_context": context,
+        "volume_spike": spike,
+        "signal": signal,
+        "message": message
+    }
 
 
 # =========================================================
-# VOLUME SPIKE
+# VOLUME SPIKE SUMMARY
 # =========================================================
 
 def volume_spike_summary(spike):
+
     if spike is True:
-        return "🔥 Volume Spike: স্বাভাবিকের তুলনায় বেশি Volume।"
+        return "🔊 Volume Spike Detected"
 
     if spike is False:
-        return "Normal Volume: উল্লেখযোগ্য Spike নেই।"
+        return "Normal Volume"
 
-    return "Volume Data অপর্যাপ্ত।"
+    return "Volume Data Unavailable"
 
 
 # =========================================================
-# RISK MANAGEMENT
+# BASIC RISK SIGNAL
 # =========================================================
 
 def risk_signal(
@@ -882,56 +1081,69 @@ def risk_signal(
     take_profit_pct=10,
     direction="LONG"
 ):
+
     entry = _safe_float(entry_price)
     current = _safe_float(current_price)
 
-    if entry is None or current is None or entry <= 0 or current <= 0:
-        return "Risk analysis unavailable: invalid price."
+    if (
+        entry is None
+        or current is None
+        or entry <= 0
+        or current <= 0
+        or stop_loss_pct <= 0
+        or take_profit_pct <= 0
+    ):
+        return None
 
     direction = str(direction).upper()
 
-    if direction not in ("LONG", "SHORT"):
-        direction = "LONG"
-
-    stop_loss_pct = max(
-        0.1, _safe_float(stop_loss_pct, 5)
-    )
-
-    take_profit_pct = max(
-        0.1, _safe_float(take_profit_pct, 10)
-    )
-
     if direction == "LONG":
-        stop = entry * (1 - stop_loss_pct / 100)
-        target = entry * (1 + take_profit_pct / 100)
 
-        if current <= stop:
-            status = "STOP LOSS LEVEL REACHED"
-        elif current >= target:
-            status = "TAKE PROFIT LEVEL REACHED"
-        else:
-            status = "POSITION WITHIN RISK RANGE"
+        stop_loss = entry * (
+            1 - stop_loss_pct / 100
+        )
+
+        take_profit = entry * (
+            1 + take_profit_pct / 100
+        )
+
+        pnl = (
+            (current - entry) / entry
+        ) * 100
+
+    elif direction == "SHORT":
+
+        stop_loss = entry * (
+            1 + stop_loss_pct / 100
+        )
+
+        take_profit = entry * (
+            1 - take_profit_pct / 100
+        )
+
+        pnl = (
+            (entry - current) / entry
+        ) * 100
 
     else:
-        stop = entry * (1 + stop_loss_pct / 100)
-        target = entry * (1 - take_profit_pct / 100)
-
-        if current >= stop:
-            status = "STOP LOSS LEVEL REACHED"
-        elif current <= target:
-            status = "TAKE PROFIT LEVEL REACHED"
-        else:
-            status = "POSITION WITHIN RISK RANGE"
+        return None
 
     return {
-        "direction": direction,
         "entry": entry,
         "current": current,
-        "stop_loss": round(stop, 10),
-        "take_profit": round(target, 10),
-        "status": status
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "pnl_percent": pnl,
+        "direction": direction,
+        "risk_reward_ratio": (
+            take_profit_pct / stop_loss_pct
+        )
     }
 
+
+# =========================================================
+# ATR RISK
+# =========================================================
 
 def calculate_atr_risk(
     entry_price,
@@ -940,56 +1152,37 @@ def calculate_atr_risk(
     atr_multiplier=2.0,
     reward_ratio=2.0
 ):
-    entry = _safe_float(entry_price)
-    atr = _safe_float(atr)
 
-    if entry is None or atr is None or entry <= 0 or atr <= 0:
-        return None
-
-    direction = str(direction).upper()
-
-    if direction not in ("LONG", "SHORT"):
-        return None
-
-    risk_distance = atr * atr_multiplier
-
-    if direction == "LONG":
-        stop = entry - risk_distance
-        target = entry + (risk_distance * reward_ratio)
-    else:
-        stop = entry + risk_distance
-        target = entry - (risk_distance * reward_ratio)
-
-    if stop <= 0 or target <= 0:
-        return None
-
-    return {
-        "direction": direction,
-        "entry": entry,
-        "stop_loss": round(stop, 10),
-        "take_profit": round(target, 10),
-        "risk_distance": round(risk_distance, 10),
-        "reward_ratio": reward_ratio
-    }
+    return risk_management_signals(
+        current_price=entry_price,
+        atr=atr,
+        direction=direction,
+        atr_multiplier=atr_multiplier,
+        reward_ratio=reward_ratio
+    )
 
 
 # =========================================================
 # SUPPORT / RESISTANCE
 # =========================================================
 
-def calculate_support_resistance(df, window=50):
+def calculate_support_resistance(
+    df,
+    window=50
+):
+
     data = _normalize_df(df)
 
     if data.empty:
-        return None
+        return {
+            "support": None,
+            "resistance": None
+        }
 
-    sample = data.tail(max(5, int(window)))
-
-    support = _safe_float(sample["low"].min())
-    resistance = _safe_float(sample["high"].max())
-
-    if support is None or resistance is None:
-        return None
+    support, resistance = find_support_resistance(
+        data["close"],
+        window=window
+    )
 
     return {
         "support": support,
@@ -1009,134 +1202,193 @@ def get_entry_exit_points(
     macd_val=None,
     signal_val=None
 ):
+
     price = _safe_float(current_price)
-
-    if price is None or price <= 0:
-        return None
-
-    support = None
-    resistance = None
-
-    if isinstance(supports, (list, tuple, np.ndarray, pd.Series)):
-        valid = [
-            _safe_float(x)
-            for x in supports
-            if _safe_float(x) is not None
-        ]
-        if valid:
-            support = max((x for x in valid if x <= price), default=None)
-
-    else:
-        support = _safe_float(supports)
-
-    if isinstance(resistances, (list, tuple, np.ndarray, pd.Series)):
-        valid = [
-            _safe_float(x)
-            for x in resistances
-            if _safe_float(x) is not None
-        ]
-        if valid:
-            resistance = min((x for x in valid if x >= price), default=None)
-
-    else:
-        resistance = _safe_float(resistances)
-
     rsi = _safe_float(rsi)
     macd_val = _safe_float(macd_val)
     signal_val = _safe_float(signal_val)
 
-    entry = price
-    reason = "Current price reference"
+    if price is None or price <= 0:
+        return None
 
-    if support is not None and support < price:
-        entry = support * 1.002
-        reason = "Near support reference"
+    support = _safe_float(supports)
+    resistance = _safe_float(resistances)
 
-    if rsi is not None and rsi > 75:
-        reason += " | RSI overbought caution"
+    if isinstance(supports, dict):
+        support = _safe_float(
+            supports.get("support")
+        )
 
-    elif rsi is not None and rsi < 30:
-        reason += " | RSI oversold; wait for confirmation"
+    if isinstance(resistances, dict):
+        resistance = _safe_float(
+            resistances.get("resistance")
+        )
+
+    direction = "NEUTRAL"
 
     if (
-        macd_val is not None
+        rsi is not None
+        and macd_val is not None
         and signal_val is not None
-        and macd_val < signal_val
     ):
-        reason += " | MACD bearish"
+
+        if rsi > 50 and macd_val > signal_val:
+            direction = "LONG"
+
+        elif rsi < 50 and macd_val < signal_val:
+            direction = "SHORT"
+
+    entry = price
+    stop_loss = None
+    take_profit = None
+
+    if direction == "LONG":
+
+        if support is not None and support < price:
+            stop_loss = support
+
+        if resistance is not None and resistance > price:
+            take_profit = resistance
+
+    elif direction == "SHORT":
+
+        if resistance is not None and resistance > price:
+            stop_loss = resistance
+
+        if support is not None and support < price:
+            take_profit = support
 
     return {
-        "entry": round(entry, 10),
-        "current_price": price,
+        "direction": direction,
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
         "support": support,
-        "resistance": resistance,
-        "reason": reason
+        "resistance": resistance
     }
 
 
 # =========================================================
 # NEW COIN ANALYSIS
+# NOT A SECURITY AUDIT
 # =========================================================
 
 def analyze_new_coin(coin_data):
+
     if not isinstance(coin_data, dict):
         return {
+            "score": 0,
+            "rating": "UNKNOWN",
             "risk": "UNKNOWN",
-            "message": "Token information unavailable."
+            "message": "Invalid token data"
         }
+
+    score = 0
+    available = 0
 
     liquidity = _safe_float(
         coin_data.get("liquidity")
     )
 
     volume = _safe_float(
-        coin_data.get("volume")
+        coin_data.get("volume_24h")
     )
 
     market_cap = _safe_float(
         coin_data.get("market_cap")
     )
 
-    score = 0
-    warnings = []
+    price_change = _safe_float(
+        coin_data.get("price_change_24h")
+    )
 
     if liquidity is not None:
+
+        available += 1
+
         if liquidity >= 100000:
-            score += 2
-        elif liquidity < 10000:
-            warnings.append("Very low liquidity")
-        else:
-            score += 1
+            score += 30
+
+        elif liquidity >= 25000:
+            score += 20
+
+        elif liquidity >= 5000:
+            score += 10
+
+    if volume is not None:
+
+        available += 1
+
+        if volume >= 1000000:
+            score += 25
+
+        elif volume >= 100000:
+            score += 18
+
+        elif volume >= 10000:
+            score += 10
+
+    if market_cap is not None:
+
+        available += 1
+
+        if market_cap >= 1000000:
+            score += 25
+
+        elif market_cap >= 100000:
+            score += 18
+
+        elif market_cap >= 10000:
+            score += 10
+
+    if price_change is not None:
+
+        available += 1
+
+        if 0 < price_change <= 20:
+            score += 20
+
+        elif price_change > 20:
+            score += 10
+
+        elif price_change < -20:
+            score += 5
+
+    if available == 0:
+
+        return {
+            "score": None,
+            "rating": "UNKNOWN",
+            "risk": "UNKNOWN",
+            "message": "পর্যাপ্ত token data পাওয়া যায়নি"
+        }
+
+    coverage = available / 4 * 100
+
+    rating = (
+        "HIGH"
+        if score >= 70
+        else "MEDIUM"
+        if score >= 40
+        else "LOW"
+    )
+
+    if liquidity is not None and liquidity < 5000:
+        risk = "HIGH"
+
+    elif coverage < 50:
+        risk = "UNKNOWN"
+
     else:
-        warnings.append("Liquidity data unavailable")
-
-    if volume is not None and liquidity is not None:
-        if liquidity > 0:
-            ratio = volume / liquidity
-
-            if ratio >= 0.5:
-                score += 1
-            elif ratio > 5:
-                warnings.append("Unusually high volume/liquidity ratio")
-    else:
-        warnings.append("Volume/liquidity comparison unavailable")
-
-    if market_cap is None:
-        warnings.append("Market cap unavailable")
-
-    if score >= 3 and not warnings:
-        risk = "LOWER RELATIVE RISK"
-    elif score >= 2:
-        risk = "MEDIUM RISK"
-    else:
-        risk = "HIGH / UNKNOWN RISK"
+        risk = "MODERATE"
 
     return {
+        "score": round(float(score), 2),
+        "rating": rating,
         "risk": risk,
-        "score": score,
-        "warnings": warnings,
+        "coverage": round(coverage, 2),
         "message": (
-            "This is a limited market-data screening, "
-            "not a security audit or guarantee."
+            "এটি liquidity, volume, market cap ও price change-ভিত্তিক "
+            "প্রাথমিক market screening; honeypot বা smart contract security audit নয়।"
         )
     }
