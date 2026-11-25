@@ -1,5 +1,8 @@
 
+# ============================================================
 # utils/analysis.py
+# SMART CRYPTO ANALYSIS ENGINE
+# ============================================================
 
 import streamlit as st
 import pandas as pd
@@ -12,6 +15,7 @@ from technicals import (
     calculate_macd,
     calculate_bollinger_bands,
     calculate_sma,
+    calculate_atr,
     detect_candlestick_patterns,
     detect_volume_spike,
     risk_management_signals,
@@ -28,7 +32,10 @@ from ai_logic import (
     get_entry_exit_points
 )
 
-# Optional AI functions
+# ------------------------------------------------------------
+# OPTIONAL AI FUNCTIONS
+# ------------------------------------------------------------
+
 try:
     from ai_logic import (
         calculate_ai_score,
@@ -47,9 +54,24 @@ try:
 except Exception:
     risk_signal = None
 
-from alerts import check_alerts
-from utils.price_data import get_price_series
-from utils.exchange import get_candles_from_exchange
+# ------------------------------------------------------------
+# OTHER MODULES
+# ------------------------------------------------------------
+
+try:
+    from alerts import check_alerts
+except Exception:
+    check_alerts = None
+
+try:
+    from utils.price_data import get_price_series
+except Exception:
+    get_price_series = None
+
+try:
+    from utils.exchange import get_candles_from_exchange
+except Exception:
+    get_candles_from_exchange = None
 
 
 # ============================================================
@@ -62,6 +84,9 @@ def safe_float(value, default=None):
         if value is None:
             return default
 
+        if isinstance(value, (pd.Series, pd.DataFrame)):
+            return default
+
         result = float(value)
 
         if not np.isfinite(result):
@@ -69,7 +94,7 @@ def safe_float(value, default=None):
 
         return result
 
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return default
 
 
@@ -79,8 +104,19 @@ def safe_last(series, default=None):
         if series is None:
             return default
 
+        if isinstance(series, pd.DataFrame):
+            return default
+
         if isinstance(series, pd.Series):
             series = series.dropna()
+
+            if series.empty:
+                return default
+
+            return safe_float(series.iloc[-1], default)
+
+        if isinstance(series, (list, tuple, np.ndarray)):
+            series = pd.Series(series).dropna()
 
             if series.empty:
                 return default
@@ -145,12 +181,11 @@ def normalize_ohlcv(data):
         np.nan
     )
 
-    df = df.dropna(subset=required)
+    df = df.dropna(
+        subset=required
+    )
 
-    if df.empty:
-        return None
-
-    # Validate real OHLC relationships
+    # Validate OHLC relationships
     df = df[
         (df["high"] >= df["low"]) &
         (df["high"] >= df["open"]) &
@@ -164,9 +199,14 @@ def normalize_ohlcv(data):
         return None
 
     if "timestamp" in df.columns:
+
         df = df.drop_duplicates(
             subset=["timestamp"],
             keep="last"
+        )
+
+        df = df.sort_values(
+            "timestamp"
         )
 
     return df.reset_index(drop=True)
@@ -196,7 +236,9 @@ def normalize_price_series(data):
             np.nan
         ).dropna()
 
-        series = series[series > 0]
+        series = series[
+            series > 0
+        ]
 
         if series.empty:
             return None
@@ -207,6 +249,35 @@ def normalize_price_series(data):
         return None
 
 
+def normalize_levels(value):
+
+    if value is None:
+        return []
+
+    if isinstance(
+        value,
+        (list, tuple, np.ndarray, pd.Series)
+    ):
+        values = list(value)
+    else:
+        values = [value]
+
+    result = []
+
+    for item in values:
+
+        number = safe_float(item)
+
+        if number is not None:
+            result.append(number)
+
+    return result
+
+
+# ============================================================
+# SUPPORT / RESISTANCE
+# ============================================================
+
 def safe_support_resistance(price_series):
 
     try:
@@ -216,25 +287,39 @@ def safe_support_resistance(price_series):
             window=50
         )
 
+        if result is None:
+            return [], []
+
         if isinstance(result, tuple) and len(result) >= 2:
 
-            supports = result[0] or []
-            resistances = result[1] or []
+            supports = result[0]
+            resistances = result[1]
 
-            return supports, resistances
+        elif isinstance(result, dict):
 
-        if isinstance(result, dict):
+            supports = result.get("support")
+            resistances = result.get("resistance")
 
-            return (
-                result.get("support", []),
-                result.get("resistance", [])
-            )
+        else:
+            return [], []
 
-    except Exception:
-        pass
+        return (
+            normalize_levels(supports),
+            normalize_levels(resistances)
+        )
 
-    return [], []
+    except Exception as e:
 
+        st.warning(
+            f"Support/Resistance error: {e}"
+        )
+
+        return [], []
+
+
+# ============================================================
+# CANDLESTICK / VOLUME ANALYSIS
+# ============================================================
 
 def safe_pattern_analysis(df):
 
@@ -258,29 +343,39 @@ def safe_pattern_analysis(df):
             volume_text
         )
 
+    working_df = df.copy()
+
+    # --------------------------------------------------------
+    # CANDLESTICK PATTERNS
+    # --------------------------------------------------------
+
     try:
 
         result = detect_candlestick_patterns(
-            df.copy()
+            working_df.copy()
         )
 
         if isinstance(result, pd.DataFrame):
 
-            df = result.copy()
+            if "pattern" in result.columns:
 
-            if "pattern" in df.columns:
-
-                patterns = df["pattern"].dropna()
+                patterns = result["pattern"].dropna()
 
                 if not patterns.empty:
-                    last_pattern = patterns.iloc[-1]
+
+                    last_pattern = str(
+                        patterns.iloc[-1]
+                    )
 
         elif isinstance(result, pd.Series):
 
             patterns = result.dropna()
 
             if not patterns.empty:
-                last_pattern = patterns.iloc[-1]
+
+                last_pattern = str(
+                    patterns.iloc[-1]
+                )
 
     except Exception as e:
 
@@ -288,24 +383,45 @@ def safe_pattern_analysis(df):
             f"Candlestick detection error: {e}"
         )
 
+    # --------------------------------------------------------
+    # VOLUME SPIKE
+    # --------------------------------------------------------
+
     try:
 
         result = detect_volume_spike(
-            df.copy()
+            working_df.copy()
         )
 
         if isinstance(result, pd.DataFrame):
 
-            df = result.copy()
+            if "volume_spike" in result.columns:
 
-            if "volume_spike" in df.columns:
-
-                value = df["volume_spike"].iloc[-1]
+                value = result[
+                    "volume_spike"
+                ].iloc[-1]
 
                 spike_flag = (
                     False if pd.isna(value)
                     else bool(value)
                 )
+
+        elif isinstance(result, pd.Series):
+
+            value = (
+                result.iloc[-1]
+                if not result.empty
+                else None
+            )
+
+            spike_flag = (
+                False if value is None or pd.isna(value)
+                else bool(value)
+            )
+
+        elif result is not None:
+
+            spike_flag = bool(result)
 
     except Exception as e:
 
@@ -313,10 +429,14 @@ def safe_pattern_analysis(df):
             f"Volume spike detection error: {e}"
         )
 
+    # --------------------------------------------------------
+    # AI CANDLE / VOLUME INTERPRETATION
+    # --------------------------------------------------------
+
     try:
 
         candle_text = candlestick_volume_ai(
-            df,
+            working_df.copy(),
             spike_flag
         )
 
@@ -345,6 +465,10 @@ def safe_pattern_analysis(df):
         volume_text
     )
 
+
+# ============================================================
+# ENTRY / EXIT
+# ============================================================
 
 def safe_entry_exit(
     current_price,
@@ -399,40 +523,50 @@ def safe_entry_exit(
         )
 
 
-def safe_additional_signals(df, price_series):
+# ============================================================
+# ADDITIONAL SIGNALS
+# ============================================================
+
+def safe_additional_signals(df):
 
     bb_signal = "Unavailable"
     sma_signal = "Unavailable"
     macd_signal_text = "Unavailable"
 
-    if df is not None:
+    if df is None:
+        return (
+            bb_signal,
+            sma_signal,
+            macd_signal_text
+        )
 
-        try:
+    try:
 
-            bb_signal = bollinger_breakout_signal(
-                df.copy()
-            )
+        bb_signal = bollinger_breakout_signal(
+            df.copy()
+        )
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-        try:
+    try:
 
-            sma_signal = calculate_sma_crossover(
-                df.copy()
-            )
+        # This function expects OHLCV DataFrame
+        sma_signal = calculate_sma_crossover(
+            df.copy()
+        )
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-        try:
+    try:
 
-            macd_signal_text = macd_histogram_signal(
-                df.copy()
-            )
+        macd_signal_text = macd_histogram_signal(
+            df.copy()
+        )
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     return (
         bb_signal,
@@ -441,6 +575,10 @@ def safe_additional_signals(df, price_series):
     )
 
 
+# ============================================================
+# AI HELPERS
+# ============================================================
+
 def safe_ai_score(df):
 
     if calculate_ai_score is None or df is None:
@@ -448,7 +586,9 @@ def safe_ai_score(df):
 
     try:
 
-        result = calculate_ai_score(df.copy())
+        result = calculate_ai_score(
+            df.copy()
+        )
 
         if isinstance(result, dict):
             return result
@@ -469,9 +609,14 @@ def safe_market_regime(df):
 
     try:
 
-        return detect_market_regime(
+        result = detect_market_regime(
             df.copy()
         )
+
+        if result is None:
+            return "Unavailable"
+
+        return result
 
     except Exception:
         return "Unavailable"
@@ -489,8 +634,74 @@ def safe_ai_report(df, ai_result):
             ai_result
         )
 
-    except Exception:
+    except Exception as e:
+
+        st.warning(
+            f"AI report error: {e}"
+        )
+
         return None
+
+
+# ============================================================
+# SAFE ALERT HANDLER
+# ============================================================
+
+def safe_check_alerts(
+    symbol,
+    current_price,
+    rsi=None,
+    volume=None,
+    pattern=None
+):
+
+    if check_alerts is None:
+        return
+
+    try:
+
+        result = check_alerts(
+            symbol,
+            current_price,
+            rsi=rsi,
+            volume=volume,
+            pattern=pattern
+        )
+
+        if result is None or result is False:
+            return
+
+        if isinstance(result, str):
+
+            st.warning(
+                f"🔔 {result}"
+            )
+
+        elif isinstance(result, dict):
+
+            st.warning(
+                f"🔔 {result}"
+            )
+
+        elif isinstance(result, (list, tuple, set)):
+
+            for item in result:
+
+                st.warning(
+                    f"🔔 {item}"
+                )
+
+        elif result is True:
+
+            st.info(
+                "🔔 An alert condition was triggered."
+            )
+
+    except Exception as e:
+
+        st.warning(
+            f"Alert system error: {e}"
+        )
 
 
 # ============================================================
@@ -513,7 +724,10 @@ def analyze_coin(
 ):
 
     st.markdown("---")
-    st.subheader(f"📊 {name} ({symbol}) Analysis")
+
+    st.subheader(
+        f"📊 {name} ({symbol}) Analysis"
+    )
 
     # --------------------------------------------------------
     # 1. FETCH REAL OHLCV
@@ -524,7 +738,11 @@ def analyze_coin(
 
     source_name = "Unavailable"
 
-    if exchange and exchange_symbol:
+    if (
+        exchange
+        and exchange_symbol
+        and get_candles_from_exchange is not None
+    ):
 
         try:
 
@@ -561,7 +779,10 @@ def analyze_coin(
     # 2. PRICE HISTORY FALLBACK
     # --------------------------------------------------------
 
-    if price_series is None:
+    if (
+        price_series is None
+        and get_price_series is not None
+    ):
 
         try:
 
@@ -605,7 +826,10 @@ def analyze_coin(
         price_series
     )
 
-    if price_series is None or len(price_series) < 20:
+    if (
+        price_series is None
+        or len(price_series) < 20
+    ):
 
         st.error(
             "❌ Insufficient historical price data. "
@@ -620,17 +844,29 @@ def analyze_coin(
 
     if current_price is None:
 
-        st.error("Invalid current price data.")
+        st.error(
+            "Invalid current price data."
+        )
+
         return None
 
-    # Use actual last completed candle change when OHLCV exists
-    if ohlcv_df is not None and len(ohlcv_df) >= 2:
+    # --------------------------------------------------------
+    # 4. PRICE CHANGE
+    # --------------------------------------------------------
+
+    if (
+        ohlcv_df is not None
+        and len(ohlcv_df) >= 2
+    ):
 
         previous_close = safe_float(
             ohlcv_df["close"].iloc[-2]
         )
 
-        if previous_close and previous_close > 0:
+        if (
+            previous_close is not None
+            and previous_close > 0
+        ):
 
             price_change = (
                 (current_price - previous_close)
@@ -648,7 +884,7 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 4. TECHNICAL INDICATORS
+    # 5. TECHNICAL INDICATORS
     # --------------------------------------------------------
 
     try:
@@ -661,14 +897,21 @@ def analyze_coin(
             price_series
         )
 
-        macd_series, macd_signal_series = (
-            calculate_macd(price_series)
+        # Current technicals.py returns 3 MACD values
+        (
+            macd_series,
+            macd_signal_series,
+            macd_histogram
+        ) = calculate_macd(
+            price_series
         )
 
-        upper_band, middle_band, lower_band = (
-            calculate_bollinger_bands(
-                price_series
-            )
+        (
+            upper_band,
+            middle_band,
+            lower_band
+        ) = calculate_bollinger_bands(
+            price_series
         )
 
         sma_short = calculate_sma(
@@ -692,6 +935,10 @@ def analyze_coin(
             macd_signal_series
         )
 
+        histogram_value = safe_last(
+            macd_histogram
+        )
+
         upper_value = safe_last(
             upper_band
         )
@@ -704,8 +951,13 @@ def analyze_coin(
             lower_band
         )
 
-        sma20 = safe_last(sma_short)
-        sma50 = safe_last(sma_long)
+        sma20 = safe_last(
+            sma_short
+        )
+
+        sma50 = safe_last(
+            sma_long
+        )
 
     except Exception as e:
 
@@ -716,7 +968,7 @@ def analyze_coin(
         return None
 
     # --------------------------------------------------------
-    # 5. REAL CANDLE / VOLUME ANALYSIS
+    # 6. REAL CANDLE / VOLUME ANALYSIS
     # --------------------------------------------------------
 
     last_pattern = None
@@ -731,7 +983,12 @@ def analyze_coin(
         "⚪ Real volume spike analysis unavailable."
     )
 
-    if ohlcv_df is not None and len(ohlcv_df) >= 20:
+    atr_value = None
+
+    if (
+        ohlcv_df is not None
+        and len(ohlcv_df) >= 20
+    ):
 
         (
             last_pattern,
@@ -742,17 +999,33 @@ def analyze_coin(
             ohlcv_df.copy()
         )
 
+        try:
+
+            atr_series = calculate_atr(
+                ohlcv_df
+            )
+
+            atr_value = safe_last(
+                atr_series
+            )
+
+        except Exception as e:
+
+            st.warning(
+                f"ATR calculation error: {e}"
+            )
+
     else:
 
         st.info(
             "ℹ️ Real OHLCV data পাওয়া যায়নি। "
-            "তাই Candlestick Pattern এবং Volume Spike "
-            "Analysis বন্ধ রাখা হয়েছে। "
+            "তাই Candlestick Pattern, Volume Spike "
+            "এবং ATR Analysis বন্ধ রাখা হয়েছে। "
             "Price history দিয়ে RSI/MACD/EMA করা হচ্ছে।"
         )
 
     # --------------------------------------------------------
-    # 6. SUPPORT / RESISTANCE
+    # 7. SUPPORT / RESISTANCE
     # --------------------------------------------------------
 
     supports, resistances = (
@@ -762,7 +1035,7 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 7. AI DECISION
+    # 8. AI DECISION
     # --------------------------------------------------------
 
     try:
@@ -788,7 +1061,7 @@ def analyze_coin(
         )
 
     # --------------------------------------------------------
-    # 8. ADDITIONAL SIGNALS
+    # 9. ADDITIONAL SIGNALS
     # --------------------------------------------------------
 
     (
@@ -796,12 +1069,11 @@ def analyze_coin(
         sma_signal,
         macd_hist_signal
     ) = safe_additional_signals(
-        ohlcv_df,
-        price_series
+        ohlcv_df
     )
 
     # --------------------------------------------------------
-    # 9. AI SCORE / MARKET REGIME
+    # 10. AI SCORE / MARKET REGIME
     # --------------------------------------------------------
 
     ai_result = safe_ai_score(
@@ -818,35 +1090,19 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 10. RISK MANAGEMENT
+    # 11. RISK MANAGEMENT
     # --------------------------------------------------------
 
     risk_msg = (
         "Risk analysis unavailable."
     )
 
-    atr_value = None
+    if (
+        atr_value is not None
+        and atr_value > 0
+    ):
 
-    if ohlcv_df is not None and len(ohlcv_df) >= 20:
-
-        try:
-
-            # ATR from the existing technicals module
-            from technicals import calculate_atr
-
-            atr_series = calculate_atr(
-                ohlcv_df
-            )
-
-            atr_value = safe_last(
-                atr_series
-            )
-
-        except Exception:
-            atr_value = None
-
-    if atr_value is not None and atr_value > 0:
-
+        # Preferred ATR-based risk calculation
         if calculate_atr_risk is not None:
 
             try:
@@ -859,13 +1115,15 @@ def analyze_coin(
 
                 if isinstance(risk_result, dict):
 
-                    risk_msg = (
-                        f"ATR Risk Analysis: {risk_result}"
+                    risk_msg = str(
+                        risk_result
                     )
 
                 elif risk_result is not None:
 
-                    risk_msg = str(risk_result)
+                    risk_msg = str(
+                        risk_result
+                    )
 
             except Exception as e:
 
@@ -873,54 +1131,54 @@ def analyze_coin(
                     f"ATR risk calculation unavailable: {e}"
                 )
 
-        elif risk_signal is not None:
+        # Fallback to technicals risk function
+        if risk_msg == "Risk analysis unavailable.":
 
             try:
 
-                risk_result = risk_signal(
+                risk_result = risk_management_signals(
                     current_price,
-                    current_price,
+                    atr_value,
                     direction="LONG"
                 )
 
-                risk_msg = str(risk_result)
+                if risk_result is not None:
 
-            except Exception:
-                pass
+                    risk_msg = str(
+                        risk_result
+                    )
 
-    # Try existing technicals risk function
-    try:
+            except Exception as e:
 
-        risk_function = risk_management_signals
+                risk_msg = (
+                    f"Risk calculation error: {e}"
+                )
 
-        signature = inspect.signature(
-            risk_function
-        )
+    # Legacy fallback
+    if (
+        risk_msg == "Risk analysis unavailable."
+        and risk_signal is not None
+    ):
 
-        parameters = signature.parameters
+        try:
 
-        risk_kwargs = {}
+            risk_result = risk_signal(
+                current_price,
+                current_price,
+                direction="LONG"
+            )
 
-        if "direction" in parameters:
-            risk_kwargs["direction"] = "LONG"
+            if risk_result is not None:
 
-        if "atr" in parameters and atr_value:
-            risk_kwargs["atr"] = atr_value
+                risk_msg = str(
+                    risk_result
+                )
 
-        risk_result = risk_function(
-            current_price,
-            **risk_kwargs
-        )
-
-        if risk_result is not None:
-
-            risk_msg = str(risk_result)
-
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     # --------------------------------------------------------
-    # 11. ENTRY / EXIT
+    # 12. ENTRY / EXIT
     # --------------------------------------------------------
 
     entry_msg, exit_msg = safe_entry_exit(
@@ -933,35 +1191,19 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 12. ALERTS
+    # 13. ALERTS
     # --------------------------------------------------------
 
-    try:
-
-        triggered_alerts = check_alerts(
-            symbol,
-            current_price,
-            rsi=rsi,
-            volume=volume,
-            pattern=last_pattern
-        )
-
-        if triggered_alerts:
-
-            for alert_msg in triggered_alerts:
-
-                st.warning(
-                    f"🔔 {alert_msg}"
-                )
-
-    except Exception as e:
-
-        st.warning(
-            f"Alert system error: {e}"
-        )
+    safe_check_alerts(
+        symbol,
+        current_price,
+        rsi=rsi,
+        volume=volume,
+        pattern=last_pattern
+    )
 
     # --------------------------------------------------------
-    # 13. DISPLAY SOURCE STATUS
+    # 14. DATA SOURCE STATUS
     # --------------------------------------------------------
 
     if ohlcv_df is not None:
@@ -971,7 +1213,8 @@ def analyze_coin(
         )
 
         st.caption(
-            "Technical indicators use the latest completed real candle."
+            "Technical indicators use historical OHLCV data. "
+            "Incomplete candles are excluded by the exchange module."
         )
 
     else:
@@ -981,12 +1224,12 @@ def analyze_coin(
         )
 
         st.caption(
-            "Candlestick, volume spike, ATR and OHLCV-based "
-            "analysis are disabled because real OHLCV is unavailable."
+            "Candlestick, volume spike and ATR analysis "
+            "are disabled because real OHLCV is unavailable."
         )
 
     # --------------------------------------------------------
-    # 14. PRICE INFORMATION
+    # 15. PRICE INFORMATION
     # --------------------------------------------------------
 
     col1, col2, col3 = st.columns(3)
@@ -1017,10 +1260,12 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 15. INDICATOR DISPLAY
+    # 16. TECHNICAL INDICATORS
     # --------------------------------------------------------
 
-    st.markdown("## 📈 Technical Indicators")
+    st.markdown(
+        "## 📈 Technical Indicators"
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -1057,18 +1302,40 @@ def analyze_coin(
     with col2:
 
         st.metric(
+            "MACD Histogram",
+            format_number(histogram_value)
+        )
+
+    with col3:
+
+        st.metric(
             "SMA 20",
             format_price(sma20)
         )
 
-    with col3:
+    col1, col2 = st.columns(2)
+
+    with col1:
 
         st.metric(
             "SMA 50",
             format_price(sma50)
         )
 
-    st.markdown("### Bollinger Bands")
+    with col2:
+
+        st.metric(
+            "ATR",
+            format_price(atr_value)
+        )
+
+    # --------------------------------------------------------
+    # 17. BOLLINGER BANDS
+    # --------------------------------------------------------
+
+    st.markdown(
+        "### Bollinger Bands"
+    )
 
     st.write(
         f"Upper Band: {format_price(upper_value)}"
@@ -1082,7 +1349,13 @@ def analyze_coin(
         f"Lower Band: {format_price(lower_value)}"
     )
 
-    st.markdown("### Additional Signals")
+    # --------------------------------------------------------
+    # 18. ADDITIONAL SIGNALS
+    # --------------------------------------------------------
+
+    st.markdown(
+        "### Additional Signals"
+    )
 
     st.write(
         f"**Bollinger Signal:** {bb_signal}"
@@ -1097,10 +1370,12 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 16. CANDLESTICK / VOLUME
+    # 19. CANDLESTICK / VOLUME
     # --------------------------------------------------------
 
-    st.markdown("## 🕯️ Candlestick / Volume Analysis")
+    st.markdown(
+        "## 🕯️ Candlestick / Volume Analysis"
+    )
 
     st.write(
         f"**Last Pattern:** {last_pattern or 'Unavailable'}"
@@ -1110,20 +1385,24 @@ def analyze_coin(
     st.write(volume_text)
 
     # --------------------------------------------------------
-    # 17. MARKET REGIME
+    # 20. MARKET REGIME
     # --------------------------------------------------------
 
-    st.markdown("## 🌍 Market Regime")
+    st.markdown(
+        "## 🌍 Market Regime"
+    )
 
     st.write(
         market_regime
     )
 
     # --------------------------------------------------------
-    # 18. AI SCORE
+    # 21. AI SCORE
     # --------------------------------------------------------
 
-    st.markdown("## 🤖 AI Score")
+    st.markdown(
+        "## 🤖 AI Score"
+    )
 
     if ai_result:
 
@@ -1155,6 +1434,13 @@ def analyze_coin(
                 f"**Confidence:** {confidence}"
             )
 
+        if ai_result.get("coverage") is not None:
+
+            st.write(
+                f"**Signal Coverage:** "
+                f"{format_number(ai_result['coverage'])}%"
+            )
+
         if ai_result.get("signals"):
 
             st.write(
@@ -1169,10 +1455,12 @@ def analyze_coin(
         )
 
     # --------------------------------------------------------
-    # 19. SUPPORT / RESISTANCE
+    # 22. SUPPORT / RESISTANCE
     # --------------------------------------------------------
 
-    st.markdown("## 🎯 Support & Resistance")
+    st.markdown(
+        "## 🎯 Support & Resistance"
+    )
 
     st.write(
         "**Supports:** " +
@@ -1199,24 +1487,22 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 20. RISK MANAGEMENT
+    # 23. RISK MANAGEMENT
     # --------------------------------------------------------
 
-    st.markdown("## 🛡️ Risk Management")
+    st.markdown(
+        "## 🛡️ Risk Management"
+    )
 
     st.write(risk_msg)
 
-    if atr_value is not None:
-
-        st.write(
-            f"**ATR:** {format_price(atr_value)}"
-        )
-
     # --------------------------------------------------------
-    # 21. ENTRY / EXIT
+    # 24. ENTRY / EXIT
     # --------------------------------------------------------
 
-    st.markdown("## 🎯 Entry / Exit Suggestions")
+    st.markdown(
+        "## 🎯 Entry / Exit Suggestions"
+    )
 
     st.write(
         f"**Entry:** {entry_msg}"
@@ -1227,33 +1513,40 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 22. AI REPORT
+    # 25. AI REPORT
     # --------------------------------------------------------
 
     if ai_report:
 
-        st.markdown("## 🧠 AI Market Report")
+        st.markdown(
+            "## 🧠 AI Market Report"
+        )
 
         st.markdown(
             str(ai_report)
         )
 
     # --------------------------------------------------------
-    # 23. FINAL AI DECISION
+    # 26. FINAL AI DECISION
     # --------------------------------------------------------
 
     st.markdown("---")
-    st.markdown("## 🚦 Final AI Decision")
+
+    st.markdown(
+        "## 🚦 Final AI Decision"
+    )
 
     st.info(
         str(decision)
     )
 
     # --------------------------------------------------------
-    # 24. PRICE CHART
+    # 27. HISTORICAL PRICE CHART
     # --------------------------------------------------------
 
-    st.markdown("## 📉 Historical Price Chart")
+    st.markdown(
+        "## 📉 Historical Price Chart"
+    )
 
     chart_data = pd.DataFrame({
         "Price": price_series
@@ -1265,7 +1558,7 @@ def analyze_coin(
     )
 
     # --------------------------------------------------------
-    # 25. REAL OHLCV TABLE
+    # 28. REAL OHLCV TABLE
     # --------------------------------------------------------
 
     if ohlcv_df is not None:
@@ -1280,7 +1573,7 @@ def analyze_coin(
             )
 
     # --------------------------------------------------------
-    # 26. RETURN ANALYSIS RESULT
+    # 29. RETURN ANALYSIS RESULT
     # --------------------------------------------------------
 
     return {
@@ -1298,11 +1591,13 @@ def analyze_coin(
         "ema": ema,
         "macd": macd_val,
         "macd_signal": signal_val,
+        "macd_histogram": histogram_value,
         "sma20": sma20,
         "sma50": sma50,
         "bollinger_upper": upper_value,
         "bollinger_middle": middle_value,
         "bollinger_lower": lower_value,
+        "atr": atr_value,
         "pattern": last_pattern,
         "volume_spike": spike_flag,
         "supports": supports,
@@ -1312,5 +1607,6 @@ def analyze_coin(
         "decision": decision,
         "risk": risk_msg,
         "entry": entry_msg,
-        "exit": exit_msg
+        "exit": exit_msg,
+        "ai_report": ai_report
     }
