@@ -4153,16 +4153,14 @@ def load_real_market_data(
             limit=candle_limit
         )
 
-    valid, message = validate_ohlcv_data(
-        df,
-        min_rows=35
-    )
+    valid = validate_ohlcv_data(
+    df,
+    min_rows=35
+)
 
-    if not valid:
-        st.error(
-            f"OHLCV data unavailable: {message}"
-        )
-        return False
+if not valid:
+    st.error(f"OHLCV data unavailable: {source}")
+    return False
 
     st.session_state[
         "loaded_ohlcv"
